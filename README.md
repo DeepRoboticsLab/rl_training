@@ -8,9 +8,7 @@ rl_training
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](https://opensource.org/license/bsd-3-clause)
 
 ## Tutorial Videos
-We've released the following tutorials for training and deploying a reinforcement learning policy. Please check it out! 
-- [【四足运控，从入门到精通】第一期 | 从头训练测试部署一个强化学习策略](https://www.bilibili.com/video/BV1xKabz9E2d/?share_source=copy_web&vd_source=57f46145c37bfb96f7583c9e02081590) (Bilibili)  
-- [Quadruped Robot Control | From Beginner to Pro Episode 1](https://youtu.be/adrdWCOHzC8?si=sAfsiPRhBu3kEJWo) (YouTube)
+We've released the following tutorials for training and deploying a reinforcement learning policy. Please check it out on [Bilibili](https://b23.tv/UoIqsFn) or [YouTube](https://youtube.com/playlist?list=PLy9YHJvMnjO0X4tx_NTWugTUMJXUrOgFH&si=pjUGF5PbFf3tGLFz)! 
 
 ## Overview
 
