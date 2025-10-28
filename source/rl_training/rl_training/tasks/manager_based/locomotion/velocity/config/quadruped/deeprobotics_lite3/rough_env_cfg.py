@@ -143,7 +143,7 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ------------------------------Terminations------------------------------
         self.terminations.illegal_contact = None
-        self.terminations.bad_orientation_2 = None
+        # self.terminations.bad_orientation_2 = None
 
         # ------------------------------Curriculums------------------------------
         # self.curriculum.command_levels.params["range_multiplier"] = (0.2, 1.0)
