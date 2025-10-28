@@ -80,6 +80,7 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             },
         }
         self.events.randomize_rigid_body_mass.params["asset_cfg"].body_names = self.link_names # [self.base_link_name]
+        self.events.randomize_rigid_body_mass_base = None
         self.events.randomize_com_positions.params["asset_cfg"].body_names = self.base_link_name # [self.base_link_name]
         # self.events.randomize_com_positions = None
         self.events.randomize_apply_external_force_torque = None
@@ -142,7 +143,7 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ------------------------------Terminations------------------------------
         self.terminations.illegal_contact = None
-        # self.terminations.illegal_contact = None
+        self.terminations.bad_orientation_2 = None
 
         # ------------------------------Curriculums------------------------------
         # self.curriculum.command_levels.params["range_multiplier"] = (0.2, 1.0)

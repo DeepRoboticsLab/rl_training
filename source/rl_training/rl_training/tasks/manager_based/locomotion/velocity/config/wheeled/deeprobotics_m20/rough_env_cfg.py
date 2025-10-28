@@ -5,8 +5,8 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
-import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
-from robot_lab.tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
+import rl_training.tasks.manager_based.locomotion.velocity.mdp as mdp
+from rl_training.tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
     ActionsCfg,
     LocomotionVelocityRoughEnvCfg,
     RewardsCfg,
@@ -15,7 +15,7 @@ from robot_lab.tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
 ##
 # Pre-defined configs
 ##
-from robot_lab.assets.deeprobotics import DEEPROBOTICS_M20_CFG  # isort: skip
+from rl_training.assets.deeprobotics import DEEPROBOTICS_M20_CFG  # isort: skip
 
 
 @configclass
@@ -108,28 +108,34 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Events------------------------------
         self.events.randomize_reset_base.params = {
             "pose_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (0.0, 0.2),
-                "roll": (-3.14, 3.14),
-                "pitch": (-3.14, 3.14),
+                "x": (-1.0, 1.0),
+                "y": (-1.0, 1.0),
+                "z": (0.0, 0.0),
+                "roll": (-0.3, 0.3),
+                "pitch": (-0.3, 0.3),
                 "yaw": (-3.14, 3.14),
             },
             "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.5, 0.5),
-                "roll": (-0.5, 0.5),
-                "pitch": (-0.5, 0.5),
-                "yaw": (-0.5, 0.5),
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
+                "z": (-0.2, 0.2),
+                "roll": (-0.05, 0.05),
+                "pitch": (-0.05, 0.05),
+                "yaw": (-0.0, 0.0),
             },
         }
         self.events.randomize_rigid_body_mass_base.params["asset_cfg"].body_names = [self.base_link_name]
-        self.events.randomize_rigid_body_mass_others.params["asset_cfg"].body_names = [
+        self.events.randomize_rigid_body_mass.params["asset_cfg"].body_names = [
             f"^(?!.*{self.base_link_name}).*"
         ]
         self.events.randomize_com_positions.params["asset_cfg"].body_names = [self.base_link_name]
         self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
+
+        self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.2)
+        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.16)
+        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
+
+        
 
         # ------------------------------Rewards------------------------------
         # General
@@ -221,12 +227,13 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Terminations------------------------------
         # self.terminations.illegal_contact.params["sensor_cfg"].body_names = [self.base_link_name]
         self.terminations.illegal_contact = None
+        self.terminations.bad_orientation_2 = None
 
         # ------------------------------Curriculums------------------------------
         # self.curriculum.command_levels.params["range_multiplier"] = (0.2, 1.0)
         self.curriculum.command_levels = None
 
         # ------------------------------Commands------------------------------
-        # self.commands.base_velocity.ranges.lin_vel_x = (-1.5, 1.5)
-        # self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
-        # self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.5, 1.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
