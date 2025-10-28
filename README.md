@@ -2,15 +2,13 @@ rl_training
 
 [![IsaacSim](https://img.shields.io/badge/IsaacSim-5.0.0-silver.svg)](https://docs.omniverse.nvidia.com/isaacsim/latest/overview.html)
 [![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.2.1-silver)](https://isaac-sim.github.io/IsaacLab)
-[![Discord](https://img.shields.io/badge/-Discord-5865F2?style=flat&logo=Discord&logoColor=white)](https://discord.gg/ZtbvJZGcey)
+[![Discord](https://img.shields.io/badge/-Discord-5865F2?style=flat&logo=Discord&logoColor=white)](https://discord.gg/gdM9mQutC8)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://docs.python.org/3/whatsnew/3.11.html)
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](https://opensource.org/license/bsd-3-clause)
 
 ## Tutorial Videos
-We've released the following tutorials for training and deploying a reinforcement learning policy. Please check it out! 
-- [【四足运控，从入门到精通】第一期 | 从头训练测试部署一个强化学习策略](https://www.bilibili.com/video/BV1xKabz9E2d/?share_source=copy_web&vd_source=57f46145c37bfb96f7583c9e02081590) (Bilibili)  
-- [Quadruped Robot Control | From Beginner to Pro Episode 1](https://youtu.be/adrdWCOHzC8?si=sAfsiPRhBu3kEJWo) (YouTube)
+We've released the following tutorials for training and deploying a reinforcement learning policy. Please check it out on [Bilibili](https://b23.tv/UoIqsFn) or [YouTube](https://youtube.com/playlist?list=PLy9YHJvMnjO0X4tx_NTWugTUMJXUrOgFH&si=pjUGF5PbFf3tGLFz)! 
 
 ## Overview
 
