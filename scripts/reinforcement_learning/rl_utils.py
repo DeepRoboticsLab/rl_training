@@ -25,3 +25,56 @@ def camera_follow(env):
     env.unwrapped.viewport_camera_controller.update_view_location(
         eye=smooth_camera_pos.cpu().numpy(), lookat=robot_pos.cpu().numpy()
     )
+
+
+
+
+import os
+import pickle
+from typing import Any
+
+def reindex_feet(vec):
+    return vec[:, [1, 0, 3, 2]]
+
+def reindex(vec):
+    return vec[:, [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]]
+
+
+def load_pickle(filename: str) -> Any:
+    """Loads an input PKL file safely.
+
+    Args:
+        filename: The path to pickled file.
+
+    Raises:
+        FileNotFoundError: When the specified file does not exist.
+
+    Returns:
+        The data read from the input file.
+    """
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"File not found: {filename}")
+    with open(filename, "rb") as f:
+        data = pickle.load(f)
+    return data
+
+
+def dump_pickle(filename: str, data: Any):
+    """Saves data into a pickle file safely.
+
+    Note:
+        The function creates any missing directory along the file's path.
+
+    Args:
+        filename: The path to save the file at.
+        data: The data to save.
+    """
+    # check ending
+    if not filename.endswith("pkl"):
+        filename += ".pkl"
+    # create directory
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+    # save data
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
