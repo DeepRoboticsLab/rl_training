@@ -29,7 +29,7 @@ We've released the following tutorials for training and deploying a reinforcemen
 - Clone this repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
 
   ```bash
-  git clone https://github.com/DeepRoboticsLab/rl_training.git
+  git clone --recurse-submodules https://github.com/DeepRoboticsLab/rl_training.git
   ```
 
 - Using a python interpreter that has Isaac Lab installed, install the library
