@@ -21,9 +21,9 @@ PERLIN_TERRAINS_CFG = TerrainGeneratorCfg(
     # slope_threshold=0.75,
     use_cache=False,
     sub_terrains={
-        "perlin": terrain_gen.MeshPerlinTerrainCfg(
+        "perlin": terrain_gen.HfPerlinTerrainCfg(
             border_width=0.5,
-            z_scale=1.0,
+            z_scale=0.23,
         ),
     },
 )

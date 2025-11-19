@@ -131,8 +131,8 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         self.rewards.joint_torques_l2.weight = -2.5e-5
         self.rewards.joint_acc_l2.weight = -1e-8
-        self.rewards.joint_deviation_l1.weight = -0.5
-        self.rewards.joint_deviation_l1.params["asset_cfg"].joint_names = [".*HipX.*"]
+        self.rewards.joint_rotation_deviation_l1.weight = -0.5
+        self.rewards.joint_rotation_deviation_l1.params["asset_cfg"].joint_names = [".*HipX.*"]
         self.rewards.joint_power.weight = -2e-5
         self.rewards.flat_orientation_l2.weight = -5.0
 

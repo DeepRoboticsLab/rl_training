@@ -16,5 +16,5 @@ efficient than the height-field representation, but it is not as flexible.
 """
 
 from .perlin_terrain_cfg import (
-    MeshPerlinTerrainCfg,
+    HfPerlinTerrainCfg,
 )

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from isaaclab.terrains.height_field.utils import height_field_to_mesh
 
 if TYPE_CHECKING:
-    from . import mesh_terrains_cfg
+    from . import perlin_terrain_cfg
 
 def generate_perlin_noise_2d(shape, res):
     def f(t):
@@ -61,7 +61,7 @@ def generate_fractal_noise_2d(xSize=20, ySize=20, xSamples=1600, ySamples=1600, 
 
 @height_field_to_mesh
 def perlin_terrain(
-    difficulty: float, cfg: hf_terrains_cfg.MeshPerlinTerrainCfg
+    difficulty: float, cfg: perlin_terrain_cfg.HfPerlinTerrainCfg
 ) -> np.ndarray:
     """Generate a Perlin noise terrain.
 
@@ -89,13 +89,14 @@ def perlin_terrain(
 
     width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
     length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    height_scale = int(cfg.z_scale / cfg.vertical_scale)
     # print("width_pixels:", width_pixels, "length_pixels:", length_pixels)
 
-    hf_raw =np.ones((width_pixels, length_pixels))
-    hf_noise = generate_fractal_noise_2d(xSize=cfg.size[0], ySize=cfg.size[1],xSamples=width_pixels, \
-                ySamples=length_pixels, frequency=cfg.frequency, fractalOctaves=cfg.fractal_octaves, \
-                fractalLacunarity=cfg.fractal_lacunarity, fractalGain=cfg.fractal_gain, zScale=cfg.z_scale)
+    # hf_raw =np.zeros((width_pixels, length_pixels))
+    hf_noise = generate_fractal_noise_2d(xSize=int(cfg.size[0]), ySize=int(cfg.size[1]),xSamples=width_pixels, \
+                ySamples=length_pixels, frequency=int(cfg.frequency), fractalOctaves=cfg.fractal_octaves, \
+                fractalLacunarity=cfg.fractal_lacunarity, fractalGain=cfg.fractal_gain, zScale=height_scale)
 
-    hf_raw += hf_noise
-
-    return np.rint(hf_raw).astype(np.int16)
+    # hf_raw += hf_noise
+    heightmap = np.rint(hf_noise).astype(np.int16)
+    return heightmap

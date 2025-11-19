@@ -25,7 +25,7 @@ Different trimesh terrain configurations.
 
 ######################
 @configclass
-class MeshPerlinTerrainCfg(HfTerrainBaseCfg):
+class HfPerlinTerrainCfg(HfTerrainBaseCfg):
     """Configuration for a Perlin noise height field terrain."""
 
     function = perlin_terrain.perlin_terrain

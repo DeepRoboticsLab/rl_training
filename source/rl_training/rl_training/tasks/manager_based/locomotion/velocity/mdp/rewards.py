@@ -105,6 +105,28 @@ def stand_still_without_cmd(
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 
+def joint_rotation_deviation_l1(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize joint positions that deviate from the default one when linear velocity command."""
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    commands = env.command_manager.get_command(command_name)
+    deviation = torch.linalg.norm(commands[:, -2:], dim=1)
+    angle = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    reward = torch.sum(torch.abs(angle), dim=1)
+    # print("deviation:",deviation.shape)
+    # print("angle:",angle.shape)
+    # print("zero:",torch.zeros_like(angle).shape)
+    return torch.where(
+        deviation < command_threshold,
+        reward,
+        torch.zeros_like(reward)
+)
 
 def joint_pos_penalty(
     env: ManagerBasedRLEnv,
@@ -631,7 +653,7 @@ def feet_slide(
 #     env, command_name: str, command_threshold: float = 0.06, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 # ) -> torch.Tensor:
 #     """Penalize offsets from the default joint positions when the command is very small."""
-#     command = env.command_manager.get_command(command_name)
+    # command = env.command_manager.get_command(command_name)
 #     # Penalize motion when command is nearly zero.
 #     return joint_deviation_l1(env, asset_cfg) * (torch.norm(command[:, :], dim=1) < command_threshold)
 
