@@ -77,7 +77,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
+            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=1
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
@@ -94,23 +94,27 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
-        "joint": DCMotorCfg(
+        "joint": DelayedPDActuatorCfg(
             joint_names_expr=[".*hipx_joint", ".*hipy_joint", ".*knee_joint"],
             effort_limit=76.4,
-            saturation_effort=76.4,
             velocity_limit=22.4,
             stiffness=80.0,
             damping=2.0,
             friction=0.0,
+            armature=0.0,
+            min_delay=0,
+            max_delay=5,
         ),
-        "wheel": DCMotorCfg(
+        "wheel": DelayedPDActuatorCfg(
             joint_names_expr=[".*_wheel_joint"],
             effort_limit=21.6,
-            saturation_effort=21.6,
             velocity_limit=79.3,
             stiffness=0.0,
             damping=0.6,
             friction=0.0,
+            armature=0.00243216,
+            min_delay=0,
+            max_delay=5,
         ),
     },
 )
