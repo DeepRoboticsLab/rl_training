@@ -69,6 +69,18 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
     wheel_joint_names = [
         "fl_wheel_joint", "fr_wheel_joint", "hl_wheel_joint", "hr_wheel_joint",
     ]
+
+    hipx_joint_names = [
+        "fl_hipx_joint", "fr_hipx_joint", "hl_hipx_joint", "hr_hipx_joint",
+    ]
+
+    hipy_joint_names = [
+        "fl_hipy_joint", "fr_hipy_joint", "hl_hipy_joint", "hr_hipy_joint",
+    ]
+
+    knee_joint_names = [
+        "fl_knee_joint", "fr_knee_joint", "hl_knee_joint", "hr_knee_joint",
+    ]
     joint_names = leg_joint_names + wheel_joint_names
     # fmt: on
 
@@ -138,8 +150,8 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.16)
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
 
-        self.events.randomize_rigid_body_material.params["static_friction_range"] = [0.35, 1.0]
-        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = [0.35, 1.0]
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = [0.35, 1.5]
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = [0.35, 1.5]
         self.events.randomize_rigid_body_material.params["restitution_range"] = [0.0, 0.7]
 
         # ------------------------------Rewards------------------------------
@@ -178,8 +190,12 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.stand_still.weight = -2.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.joint_pos_penalty.weight = -0.4
-        self.rewards.joint_pos_penalty.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.hipx_joint_pos_penalty.weight = -0.4
+        self.rewards.hipx_joint_pos_penalty.params["asset_cfg"].joint_names = self.hipx_joint_names
+        self.rewards.hipy_joint_pos_penalty.weight = -0.1
+        self.rewards.hipy_joint_pos_penalty.params["asset_cfg"].joint_names = self.hipy_joint_names
+        self.rewards.knee_joint_pos_penalty.weight = -0.1
+        self.rewards.knee_joint_pos_penalty.params["asset_cfg"].joint_names = self.knee_joint_names
         self.rewards.wheel_vel_penalty.weight = 0
         self.rewards.wheel_vel_penalty.params["sensor_cfg"].body_names = self.foot_link_name
         self.rewards.wheel_vel_penalty.params["asset_cfg"].joint_names = self.wheel_joint_names

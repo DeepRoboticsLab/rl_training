@@ -106,6 +106,12 @@ python scripts/reinforcement_learning/rsl_rl/play.py --task=Rough-Deeprobotics-M
 * Play/Train with 32 environments, add `--num_envs 32`
 * Play on specific folder or checkpoint, add `--load_run run_folder_name --checkpoint model.pt`
 * Resume training from folder or checkpoint, add `--resume --load_run run_folder_name --checkpoint model.pt`
+
+## Trained Results
+You can download our trained examples for reference of the training process. This should be expected if you run our training process properly. [M20](https://drive.google.com/file/d/1PAGIHOI6Lsge_JA9kU3w7RU-GyqXybob/view?usp=drive_link) and [Lite3](https://drive.google.com/file/d/1EgCVQA552x3YiaRhPRv675TSd01yqF0c/view?usp=drive_link)
+
+
+
 ## Multi-gpu acceleration
 * To train with multiple GPUs, use the following command, where --nproc_per_node represents the number of available GPUs:
     ```bash
