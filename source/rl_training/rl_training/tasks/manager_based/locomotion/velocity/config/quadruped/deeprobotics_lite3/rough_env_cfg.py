@@ -87,54 +87,80 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.events.randomize_push_robot = None
         self.events.randomize_actuator_gains.params["asset_cfg"].joint_names = self.joint_names
 
+        # set terrain generation probability to 0 for boxes and stairs
+        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].proportion = 0.4
+        self.scene.terrain.terrain_generator.sub_terrains["hf_pyramid_slope"].proportion = 0.3
+        self.scene.terrain.terrain_generator.sub_terrains["hf_pyramid_slope_inv"].proportion = 0.3
+        self.scene.terrain.terrain_generator.sub_terrains["boxes"].proportion = 0.0
+        self.scene.terrain.terrain_generator.sub_terrains["pyramid_stairs"].proportion = 0.0
+        self.scene.terrain.terrain_generator.sub_terrains["pyramid_stairs_inv"].proportion = 0.0
         # scale down the terrains because the robot is small
-        self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.1)
+        # self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.1)
+        # self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_width = 0.8
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
 
         # ------------------------------Rewards------------------------------
-        self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.action_rate_l2.weight = -0.02 #-0.02
         # self.rewards.smoothness_2.weight = -0.0075
 
         self.rewards.base_height_l2.weight = -10.0
         self.rewards.base_height_l2.params["target_height"] = 0.35
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
 
-        self.rewards.feet_air_time.weight = 1.0
-        self.rewards.feet_air_time.params["threshold"] = 0.5
-        self.rewards.feet_air_time.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_air_time_variance.weight = -8.0
+        self.rewards.feet_air_time_including_ang_z.weight = 5.0 # 5.0
+        self.rewards.feet_air_time_including_ang_z.params["threshold"] = 0.5
+        self.rewards.feet_air_time_including_ang_z.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_air_time_variance.weight = -8.0 # -8.0
         self.rewards.feet_air_time_variance.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.weight = -0.05
         self.rewards.feet_slide.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.params["asset_cfg"].body_names = [self.foot_link_name]
-        self.rewards.stand_still.weight = -0.3
+        self.rewards.stand_still.weight = -0.5 # -1.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.joint_names
         self.rewards.stand_still.params["command_threshold"] = 0.1
-        self.rewards.feet_height_body.weight = -2.5
+        self.rewards.feet_height_body.weight = -2.5 # -2.5
         self.rewards.feet_height_body.params["target_height"] = -0.35
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_height.weight = -0.2
+        self.rewards.feet_height.weight = -0.2 # -0.2
         self.rewards.feet_height.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height.params["target_height"] = 0.05
-        self.rewards.contact_forces.weight = -2e-2
+        self.rewards.contact_forces.weight = -1e-1 # -2e-2
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
-        self.rewards.lin_vel_z_l2.weight = -2.0
-        self.rewards.ang_vel_xy_l2.weight = -0.05
+        self.rewards.lin_vel_z_l2.weight = -2.0 #-2.0
+        self.rewards.ang_vel_xy_l2.weight = -0.05 # -0.05
 
-        self.rewards.track_lin_vel_xy_exp.weight = 1.2
-        self.rewards.track_ang_vel_z_exp.weight = 0.6
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_ang_vel_z_exp.weight = 1.5
 
         self.rewards.undesired_contacts.weight = -0.5
         self.rewards.undesired_contacts.params["sensor_cfg"].body_names = [f"^(?!.*{self.foot_link_name}).*"]
 
         self.rewards.joint_torques_l2.weight = -2.5e-5
         self.rewards.joint_acc_l2.weight = -1e-8
-        self.rewards.joint_rotation_deviation_l1.weight = -0.5
-        self.rewards.joint_rotation_deviation_l1.params["asset_cfg"].joint_names = [".*HipX.*"]
+        self.rewards.joint_deviation_l1.weight = -0.5
+        self.rewards.joint_deviation_l1.params["asset_cfg"].joint_names = [".*HipX.*"]
         self.rewards.joint_power.weight = -2e-5
         self.rewards.flat_orientation_l2.weight = -5.0
+
+        # add the following rewards to improve the gait
+        self.rewards.feet_gait.weight = 0.5
+        self.rewards.feet_gait.params["synced_feet_pair_names"] = [
+            ["FL_FOOT", "HR_FOOT"],
+            ["FR_FOOT", "HL_FOOT"]
+        ]
+
+        self.rewards.joint_mirror.weight = -0.05
+        self.rewards.joint_mirror.params["mirror_joints"] = [
+            ["FL_(HipX|HipY|Knee).*", "HR_(HipX|HipY|Knee).*"],
+            ["FR_(HipX|HipY|Knee).*", "HL_(HipX|HipY|Knee).*"],
+        ]
+
+        self.rewards.joint_pos_limits.weight = -5.0
+        # self.rewards.joint_pos_penalty.weight = -1.0
+        self.rewards.feet_contact_without_cmd.weight = 0.1
+        self.rewards.feet_contact_without_cmd.params["sensor_cfg"].body_names = [self.foot_link_name]
 
 
         # If the weight of rewards is 0, set rewards to None
@@ -152,4 +178,4 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Commands------------------------------
         self.commands.base_velocity.ranges.lin_vel_x = (-1.5, 1.5)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.8, 0.8)
-        self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)

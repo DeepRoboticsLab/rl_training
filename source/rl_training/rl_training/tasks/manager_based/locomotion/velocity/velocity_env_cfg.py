@@ -452,16 +452,6 @@ class RewardsCfg:
         },
     )
 
-    joint_rotation_deviation_l1 = RewTerm(
-        func=mdp.joint_rotation_deviation_l1,
-        weight=0.0,
-        params={
-            "command_name": "base_velocity",
-            "command_threshold": 0.1,
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-        },
-    )
-
     joint_pos_penalty = RewTerm(
         func=mdp.joint_pos_penalty,
         weight=0.0,
@@ -551,8 +541,18 @@ class RewardsCfg:
     )
 
     # Others
-    feet_air_time = RewTerm(
-        func=mdp.feet_air_time,
+    # feet_air_time = RewTerm(
+    #     func=mdp.feet_air_time,
+    #     weight=0.0,
+    #     params={
+    #         "command_name": "base_velocity",
+    #         "threshold": 0.5,
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+    #     },
+    # )
+
+    feet_air_time_including_ang_z = RewTerm(
+        func=mdp.feet_air_time_including_ang_z,
         weight=0.0,
         params={
             "command_name": "base_velocity",
@@ -671,6 +671,15 @@ class RewardsCfg:
     # )
 
     upward = RewTerm(func=mdp.upward, weight=0.0)
+
+    # lin_vel_xy_l2_with_ang_z_command = RewTerm(
+    #     func=mdp.lin_vel_xy_l2_with_ang_z_command,
+    #     weight=0,
+    #     params={
+    #         "command_name": "base_velocity",
+    #         "command_threshold": 0.1,
+    #     },
+    # ) # negetive
 
 
 @configclass
