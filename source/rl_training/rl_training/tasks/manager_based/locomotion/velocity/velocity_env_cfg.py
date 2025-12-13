@@ -551,7 +551,7 @@ class RewardsCfg:
     #     },
     # )
 
-    feet_air_time_including_ang_z = RewTerm(
+    feet_air_time = RewTerm(
         func=mdp.feet_air_time_including_ang_z,
         weight=0.0,
         params={
