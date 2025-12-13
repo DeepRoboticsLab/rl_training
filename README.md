@@ -21,7 +21,9 @@ We've released the following tutorials for training and deploying a reinforcemen
 
 > [!NOTE]
 > If you want to deploy policies in mujoco or real robots, please use the corresponding deploy repo in [Deep Robotics Github Center](https://github.com/DeepRoboticsLab).
+## Contribution 
 
+Everyone is welcome to contribute to this repo. If you discover a bug or optimize our training config, just submit a pull request and we will look into it.
 ## Installation
 
 - Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html). We recommend using the conda installation as it simplifies calling Python scripts from the terminal.
@@ -29,7 +31,7 @@ We've released the following tutorials for training and deploying a reinforcemen
 - Clone this repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
 
   ```bash
-  git clone https://github.com/DeepRoboticsLab/rl_training.git
+  git clone --recurse-submodules https://github.com/DeepRoboticsLab/rl_training.git
   ```
 
 - Using a python interpreter that has Isaac Lab installed, install the library
@@ -104,6 +106,12 @@ python scripts/reinforcement_learning/rsl_rl/play.py --task=Rough-Deeprobotics-M
 * Play/Train with 32 environments, add `--num_envs 32`
 * Play on specific folder or checkpoint, add `--load_run run_folder_name --checkpoint model.pt`
 * Resume training from folder or checkpoint, add `--resume --load_run run_folder_name --checkpoint model.pt`
+
+## Trained Results
+You can download our trained examples for reference of the training process. This should be expected if you run our training process properly. [M20](https://drive.google.com/file/d/1PAGIHOI6Lsge_JA9kU3w7RU-GyqXybob/view?usp=drive_link) and [Lite3](https://drive.google.com/file/d/1EgCVQA552x3YiaRhPRv675TSd01yqF0c/view?usp=drive_link)
+
+
+
 ## Multi-gpu acceleration
 * To train with multiple GPUs, use the following command, where --nproc_per_node represents the number of available GPUs:
     ```bash

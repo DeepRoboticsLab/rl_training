@@ -1,4 +1,7 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2025 Deep Robotics
+# SPDX-License-Identifier: BSD 3-Clause
+# 
+# # Copyright (c) 2024-2025 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
@@ -19,7 +22,7 @@ import toml
 ISAACLAB_ASSETS_EXT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 """Path to the extension source directory."""
 
-ISAACLAB_ASSETS_DATA_DIR = os.path.join(ISAACLAB_ASSETS_EXT_DIR, "data")
+ISAACLAB_ASSETS_DATA_DIR = os.path.join(ISAACLAB_ASSETS_EXT_DIR, "../../deep_robotics_model")
 """Path to the extension data directory."""
 
 ISAACLAB_ASSETS_METADATA = toml.load(os.path.join(ISAACLAB_ASSETS_EXT_DIR, "config", "extension.toml"))

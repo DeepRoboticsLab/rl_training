@@ -15,8 +15,10 @@ class DeeproboticsLite3RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 100
     experiment_name = "deeprobotics_lite3_rough"
     empirical_normalization = False
+    clip_actions = 100
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
+        noise_std_type="log",
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",

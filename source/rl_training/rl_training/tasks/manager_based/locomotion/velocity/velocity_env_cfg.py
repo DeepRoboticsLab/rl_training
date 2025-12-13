@@ -281,7 +281,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=""),
-            "mass_distribution_params": (0.7, 1.3),
+            "mass_distribution_params": (0.85, 1.15),
             "operation": "scale",
             "recompute_inertia": True,
         },
@@ -303,7 +303,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "inertia_distribution_params": (0.5, 1.5),
+            "inertia_distribution_params": (0.85, 1.15),
             "operation": "scale",
         },
     )
@@ -343,8 +343,8 @@ class EventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "stiffness_distribution_params": (0.7, 1.3),
-            "damping_distribution_params": (0.7, 1.3),
+            "stiffness_distribution_params": (0.85, 1.15),
+            "damping_distribution_params": (0.85, 1.15),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -464,6 +464,45 @@ class RewardsCfg:
         },
     )
 
+    hipx_joint_pos_penalty = RewTerm(
+        func=mdp.joint_pos_penalty,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stand_still_scale": 5.0,
+            "velocity_threshold": 0.5,
+            "command_threshold": 0.1,
+        },
+    )
+
+    hipy_joint_pos_penalty = RewTerm(
+        func=mdp.joint_pos_penalty,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stand_still_scale": 5.0,
+            "velocity_threshold": 0.5,
+            "command_threshold": 0.1,
+        },
+    )
+
+    knee_joint_pos_penalty = RewTerm(
+        func=mdp.joint_pos_penalty,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stand_still_scale": 5.0,
+            "velocity_threshold": 0.5,
+            "command_threshold": 0.1,
+        },
+    )
+
+
+
+
     wheel_vel_penalty = RewTerm(
         func=mdp.wheel_vel_penalty,
         weight=0.0,
@@ -534,10 +573,10 @@ class RewardsCfg:
 
     # Velocity-tracking rewards
     track_lin_vel_xy_exp = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_lin_vel_xy_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.5)}
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_ang_vel_z_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.5)}
     )
 
     # Others
@@ -753,6 +792,8 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        self.sim.physx.max_position_iteration_count = 4
+        self.sim.physx.max_velocity_iteration_count = 1
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         if self.scene.height_scanner is not None:

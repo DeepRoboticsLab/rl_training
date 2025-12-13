@@ -11,11 +11,8 @@ from isaaclab.assets.articulation import ArticulationCfg
 from rl_training.assets import ISAACLAB_ASSETS_DATA_DIR
 
 DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
-    spawn=sim_utils.UrdfFileCfg(
-        fix_base=False,
-        merge_fixed_joints=True,
-        replace_cylinders_with_capsules=True,
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/deeprobotics/lite3_description/urdf/lite3.urdf",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Lite3/Lite3_usd/Lite3.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -28,9 +25,6 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=1
-        ),
-        joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
@@ -70,11 +64,8 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
 )
 
 DEEPROBOTICS_M20_CFG = ArticulationCfg(
-    spawn=sim_utils.UrdfFileCfg(
-        fix_base=False,
-        merge_fixed_joints=True,
-        replace_cylinders_with_capsules=True,
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/deeprobotics/m20_description/urdf/m20.urdf",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/M20/M20_usd/M20.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -86,10 +77,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
-        ),
-        joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
+            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=1
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
@@ -106,24 +94,29 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
-        "joint": DCMotorCfg(
+        "joint": DelayedPDActuatorCfg(
             joint_names_expr=[".*hipx_joint", ".*hipy_joint", ".*knee_joint"],
             effort_limit=76.4,
-            saturation_effort=76.4,
             velocity_limit=22.4,
             stiffness=80.0,
             damping=2.0,
             friction=0.0,
+            armature=0.0,
+            min_delay=0,
+            max_delay=5,
         ),
-        "wheel": DCMotorCfg(
+        "wheel": DelayedPDActuatorCfg(
             joint_names_expr=[".*_wheel_joint"],
             effort_limit=21.6,
-            saturation_effort=21.6,
             velocity_limit=79.3,
             stiffness=0.0,
             damping=0.6,
             friction=0.0,
+            armature=0.00243216,
+            min_delay=0,
+            max_delay=5,
         ),
     },
 )
+
 

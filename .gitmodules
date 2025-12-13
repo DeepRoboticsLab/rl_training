@@ -1,0 +1,3 @@
+[submodule "deep_robotics_model"]
+	path = deep_robotics_model
+	url = https://github.com/DeepRoboticsLab/deep_robotics_model.git
