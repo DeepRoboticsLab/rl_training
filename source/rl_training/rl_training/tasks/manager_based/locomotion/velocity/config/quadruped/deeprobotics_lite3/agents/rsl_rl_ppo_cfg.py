@@ -11,7 +11,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class DeeproboticsLite3RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 20000
+    max_iterations = 10000
     save_interval = 100
     experiment_name = "deeprobotics_lite3_rough"
     empirical_normalization = False

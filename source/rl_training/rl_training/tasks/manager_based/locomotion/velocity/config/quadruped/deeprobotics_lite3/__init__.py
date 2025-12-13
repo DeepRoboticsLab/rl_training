@@ -33,3 +33,4 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:DeeproboticsLite3RoughTrainerCfg",
     },
 )
+
