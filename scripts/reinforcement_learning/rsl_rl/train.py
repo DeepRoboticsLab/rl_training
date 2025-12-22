@@ -15,6 +15,7 @@
 
 import argparse
 import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import sys
 
 from isaaclab.app import AppLauncher
