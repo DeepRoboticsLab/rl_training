@@ -1,7 +1,7 @@
-rl_training
+# rl_training
 
 [![IsaacSim](https://img.shields.io/badge/IsaacSim-5.1.0-silver.svg)](https://docs.omniverse.nvidia.com/isaacsim/latest/overview.html)
-[![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.3.0-silver)](https://isaac-sim.github.io/IsaacLab)
+[![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.3.2-silver)](https://isaac-sim.github.io/IsaacLab)
 [![Discord](https://img.shields.io/badge/-Discord-5865F2?style=flat&logo=Discord&logoColor=white)](https://discord.gg/gdM9mQutC8)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://docs.python.org/3/whatsnew/3.11.html)
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
@@ -106,11 +106,6 @@ python scripts/reinforcement_learning/rsl_rl/play.py --task=Rough-Deeprobotics-M
 * Play/Train with 32 environments, add `--num_envs 32`
 * Play on specific folder or checkpoint, add `--load_run run_folder_name --checkpoint model.pt`
 * Resume training from folder or checkpoint, add `--resume --load_run run_folder_name --checkpoint model.pt`
-
-## Trained Results
-You can download our trained examples for reference of the training process. This should be expected if you run our training process properly. [M20](https://drive.google.com/file/d/1PAGIHOI6Lsge_JA9kU3w7RU-GyqXybob/view?usp=drive_link) and [Lite3](https://drive.google.com/file/d/1EgCVQA552x3YiaRhPRv675TSd01yqF0c/view?usp=drive_link)
-
-
 
 ## Multi-gpu acceleration
 * To train with multiple GPUs, use the following command, where --nproc_per_node represents the number of available GPUs:
