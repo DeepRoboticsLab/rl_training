@@ -35,5 +35,7 @@ _repo
 _build
 .lastformat
 
+# Claude Code
+CLAUDE.md
 
 **/usd/*
