@@ -134,6 +134,36 @@ To view tensorboard, run:
 tensorboard --logdir=logs
 ```
 
+## Export Policy to ONNX (without Isaac Sim)
+
+Export a trained checkpoint to ONNX directly from the `.pt` file — no Isaac Sim or environment setup required:
+
+```bash
+# Lite3
+python scripts/tools/export_onnx_fast.py \
+    --checkpoint_path logs/rsl_rl/deeprobotics_lite3_rough/<run>/model_5000.pt \
+    --robot lite3 \
+    --output_path exported/lite3_policy.onnx
+
+# M20
+python scripts/tools/export_onnx_fast.py \
+    --checkpoint_path logs/rsl_rl/deeprobotics_m20_rough/<run>/model_5000.pt \
+    --robot m20 \
+    --output_path exported/m20_policy.onnx
+```
+
+Robot metadata (joint names, stiffness/damping, default positions, action scales) is embedded in the ONNX file as model properties. Add `--no_metadata` to skip this.
+
+## Compare Training Runs
+
+Diff the `agent.yaml` and `env.yaml` configs between two runs (saved automatically to `params/` by `train.py`):
+
+```bash
+python scripts/tools/compare_runs.py \
+    logs/rsl_rl/deeprobotics_lite3_rough/<run1> \
+    logs/rsl_rl/deeprobotics_lite3_rough/<run2>
+```
+
 ## Troubleshooting
 
 ### Pylance Missing Indexing of Extensions
