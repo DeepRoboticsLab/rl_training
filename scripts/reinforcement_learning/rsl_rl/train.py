@@ -57,6 +57,12 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+# suppress noisy omni.usd warnings (e.g. unresolved visual prim references)
+import carb
+carb.logging.acquire_logging().set_level_threshold_for_source(
+    "omni.usd", carb.logging.LogSettingBehavior.OVERRIDE, carb.logging.LEVEL_ERROR
+)
+
 """Rest everything follows."""
 
 import gymnasium as gym
