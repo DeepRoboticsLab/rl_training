@@ -190,10 +190,25 @@ def main() -> None:
     # --- load checkpoint ---
     print(f"[INFO] Loading: {args.checkpoint_path}")
     ckpt = torch.load(args.checkpoint_path, map_location="cpu", weights_only=True)
-    sd = ckpt["model_state_dict"]
+
+    # rsl-rl-lib >=3.1.0 stores actor separately with "mlp." prefix;
+    # older versions store everything in "model_state_dict" with "actor." prefix.
+    if "actor_state_dict" in ckpt:
+        raw_sd = ckpt["actor_state_dict"]
+        # Remap "mlp.X.weight/bias" -> "actor.X.weight/bias" so _build_actor works
+        sd = {}
+        for k, v in raw_sd.items():
+            if k.startswith("mlp."):
+                sd["actor." + k[len("mlp."):]] = v
+            elif k.startswith("distribution."):
+                # "distribution.log_std_param" -> "log_std"
+                sd["log_std"] = v
+            else:
+                sd[k] = v
+    else:
+        sd = ckpt["model_state_dict"]
 
     obs_dim    = sd["actor.0.weight"].shape[1]
-    # RSL-RL stores log std as "log_std" (newer) or "std" (older)
     std_key    = "log_std" if "log_std" in sd else "std"
     action_dim = sd[std_key].shape[0]
     print(f"[INFO] obs_dim={obs_dim}  action_dim={action_dim}")

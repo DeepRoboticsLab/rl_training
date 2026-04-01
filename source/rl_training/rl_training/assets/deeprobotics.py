@@ -47,7 +47,7 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.0,
             min_delay=0,
-            max_delay=5,
+            max_delay=1,
         ),
         "Knee": DelayedPDActuatorCfg(
             joint_names_expr=[".*_Knee_joint"],
@@ -58,7 +58,7 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.0,
             min_delay=0,
-            max_delay=5,
+            max_delay=1,
         ),
     },
 )
@@ -103,7 +103,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.0,
             min_delay=0,
-            max_delay=5,
+            max_delay=2,
         ),
         "wheel": DelayedPDActuatorCfg(
             joint_names_expr=[".*_wheel_joint"],
@@ -114,7 +114,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.00243216,
             min_delay=0,
-            max_delay=5,
+            max_delay=2,
         ),
     },
 )
