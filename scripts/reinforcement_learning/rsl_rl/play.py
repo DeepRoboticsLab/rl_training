@@ -22,7 +22,6 @@ from isaaclab.app import AppLauncher
 # local imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import cli_args
-from rl_utils import camera_follow
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -56,11 +55,16 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+# import after SimulationApp is created to avoid early Omniverse/pxr imports
+from rl_utils import camera_follow
+
 """Rest everything follows."""
 
 import gymnasium as gym
+import importlib.metadata as metadata
 import time
 import torch
+from packaging import version
 
 from rsl_rl.runners import OnPolicyRunner
 
@@ -75,11 +79,19 @@ from isaaclab.envs import (
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlVecEnvWrapper,
+    export_policy_as_jit,
+    export_policy_as_onnx,
+    handle_deprecated_rsl_rl_cfg,
+)
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import rl_training.tasks  # noqa: F401
+
+installed_version = metadata.version("rsl-rl-lib")
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -88,6 +100,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     task_name = args_cli.task.split(":")[-1]
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 50
 
     # set the environment seed
@@ -165,29 +178,37 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
-    # extract the neural network module
-    # we do this in a try-except to maintain backwards compatibility.
-    try:
-        # version 2.3 onwards
-        policy_nn = ppo_runner.alg.policy
-    except AttributeError:
-        # version 2.2 and below
-        policy_nn = ppo_runner.alg.actor_critic
-
-    # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_onnx(
-        policy=policy_nn,
-        normalizer=None,
-        path=export_model_dir,
-        filename="policy.onnx",
-    )
-    export_policy_as_jit(
-        policy=policy_nn,
-        normalizer=None,
-        path=export_model_dir,
-        filename="policy.pt",
-    )
+
+    if version.parse(installed_version) >= version.parse("4.0.0"):
+        # Use runner-native exporters for rsl-rl >= 4.0.0
+        ppo_runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
+        ppo_runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
+        policy_nn = None
+    else:
+        # Fallback for rsl-rl < 4.0.0
+        if version.parse(installed_version) >= version.parse("2.3.0"):
+            policy_nn = ppo_runner.alg.policy
+        else:
+            policy_nn = ppo_runner.alg.actor_critic
+
+        if hasattr(policy_nn, "actor_obs_normalizer"):
+            normalizer = policy_nn.actor_obs_normalizer
+        else:
+            normalizer = None
+
+        export_policy_as_onnx(
+            policy=policy_nn,
+            normalizer=normalizer,
+            path=export_model_dir,
+            filename="policy.onnx",
+        )
+        export_policy_as_jit(
+            policy=policy_nn,
+            normalizer=normalizer,
+            path=export_model_dir,
+            filename="policy.pt",
+        )
 
     dt = env.unwrapped.step_dt
     # print(dt, "dt")
