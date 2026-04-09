@@ -18,6 +18,7 @@
 !.vscode
 
 # Outputs
+exported/
 **/runs/*
 **/logs/*
 **/recordings/*
