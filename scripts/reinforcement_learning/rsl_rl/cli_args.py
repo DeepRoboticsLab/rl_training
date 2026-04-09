@@ -95,3 +95,65 @@ def update_rsl_rl_cfg(agent_cfg: RslRlOnPolicyRunnerCfg, args_cli: argparse.Name
         agent_cfg.neptune_project = args_cli.log_project_name
 
     return agent_cfg
+
+
+def convert_rsl_rl_cfg_dict(cfg_dict: dict) -> dict:
+    """Convert old-style rsl-rl config dict (with 'policy' key) to new-style (with 'actor'/'critic' keys).
+
+    rsl-rl v5+ expects separate 'actor' and 'critic' config dicts instead of a single 'policy' dict.
+    This function performs the conversion so that IsaacLab's config format works with rsl-rl v5+.
+
+    Args:
+        cfg_dict: The config dict from agent_cfg.to_dict().
+
+    Returns:
+        The converted config dict compatible with rsl-rl v5+.
+    """
+    if "actor" in cfg_dict and "critic" in cfg_dict:
+        # Already in new format
+        return cfg_dict
+
+    policy = cfg_dict.pop("policy", {})
+
+    # Build distribution config for actor from noise std settings
+    init_noise_std = policy.pop("init_noise_std", 1.0)
+    noise_std_type = policy.pop("noise_std_type", "scalar")
+    distribution_cfg = {
+        "class_name": "GaussianDistribution",
+        "init_std": init_noise_std,
+        "std_type": noise_std_type,
+    }
+
+    # Handle observation normalization
+    actor_obs_norm = policy.pop("actor_obs_normalization", False)
+    critic_obs_norm = policy.pop("critic_obs_normalization", False)
+    # Support legacy empirical_normalization flag
+    empirical_norm = cfg_dict.pop("empirical_normalization", None)
+    if empirical_norm is not None:
+        actor_obs_norm = empirical_norm
+        critic_obs_norm = empirical_norm
+
+    actor_hidden_dims = policy.pop("actor_hidden_dims", [256, 256, 256])
+    critic_hidden_dims = policy.pop("critic_hidden_dims", [256, 256, 256])
+    activation = policy.pop("activation", "elu")
+
+    cfg_dict["actor"] = {
+        "class_name": "MLPModel",
+        "hidden_dims": actor_hidden_dims,
+        "activation": activation,
+        "obs_normalization": actor_obs_norm,
+        "distribution_cfg": distribution_cfg,
+    }
+    cfg_dict["critic"] = {
+        "class_name": "MLPModel",
+        "hidden_dims": critic_hidden_dims,
+        "activation": activation,
+        "obs_normalization": critic_obs_norm,
+    }
+
+    # Ensure obs_groups is a proper dict (handle MISSING sentinel)
+    obs_groups = cfg_dict.get("obs_groups")
+    if not isinstance(obs_groups, dict):
+        cfg_dict["obs_groups"] = {}
+
+    return cfg_dict
