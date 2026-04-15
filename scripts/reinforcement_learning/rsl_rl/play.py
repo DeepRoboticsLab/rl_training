@@ -58,13 +58,32 @@ simulation_app = app_launcher.app
 # import after SimulationApp is created to avoid early Omniverse/pxr imports
 from rl_utils import camera_follow
 
+"""Check for minimum supported RSL-RL version."""
+
+import importlib.metadata as metadata
+import platform
+from packaging import version
+
+# check minimum supported rsl-rl version
+RSL_RL_VERSION = "3.0.1"
+installed_version = metadata.version("rsl-rl-lib")
+if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
+    if platform.system() == "Windows":
+        cmd = [r".\isaaclab.bat", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+    else:
+        cmd = ["./isaaclab.sh", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+    print(
+        f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
+        f" and required version is: '{RSL_RL_VERSION}'.\nTo install the correct version, run:"
+        f"\n\n\t{' '.join(cmd)}\n"
+    )
+    exit(1)
+
 """Rest everything follows."""
 
 import gymnasium as gym
-import importlib.metadata as metadata
 import time
 import torch
-from packaging import version
 
 from rsl_rl.runners import OnPolicyRunner
 
@@ -84,13 +103,12 @@ from isaaclab_rl.rsl_rl import (
     RslRlVecEnvWrapper,
     export_policy_as_jit,
     export_policy_as_onnx,
+    handle_deprecated_rsl_rl_cfg,
 )
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import rl_training.tasks  # noqa: F401
-
-installed_version = metadata.version("rsl-rl-lib")
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -100,6 +118,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 50
+
+    # handle deprecated configurations (convert old policy format to new actor/critic format)
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -170,8 +191,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
-    # convert old-style config (with 'policy' key) to new-style (with 'actor'/'critic' keys) for rsl-rl v5+
-    train_cfg = cli_args.convert_rsl_rl_cfg_dict(agent_cfg.to_dict())
+    # convert config to dict and create runner
+    train_cfg = agent_cfg.to_dict()
     ppo_runner = OnPolicyRunner(env, train_cfg, log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
 
@@ -211,9 +232,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
 
     dt = env.unwrapped.step_dt
-    # print(dt, "dt")
     # reset environment
-    
     obs, _ = env.reset()
     
     timestep = 0
