@@ -14,10 +14,8 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-from importlib import metadata
-import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import sys
+import os
 
 from isaaclab.app import AppLauncher
 
@@ -63,10 +61,30 @@ carb.logging.acquire_logging().set_level_threshold_for_source(
     "omni.usd", carb.logging.LogSettingBehavior.OVERRIDE, carb.logging.LEVEL_ERROR
 )
 
+"""Check for minimum supported RSL-RL version."""
+
+import importlib.metadata as metadata
+import platform
+from packaging import version
+
+# check minimum supported rsl-rl version
+RSL_RL_VERSION = "3.0.1"
+installed_version = metadata.version("rsl-rl-lib")
+if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
+    if platform.system() == "Windows":
+        cmd = [r".\isaaclab.bat", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+    else:
+        cmd = ["./isaaclab.sh", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+    print(
+        f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
+        f" and required version is: '{RSL_RL_VERSION}'.\nTo install the correct version, run:"
+        f"\n\n\t{' '.join(cmd)}\n"
+    )
+    exit(1)
+
 """Rest everything follows."""
 
 import gymnasium as gym
-import os
 import torch
 from datetime import datetime
 
@@ -81,7 +99,7 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
@@ -102,6 +120,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+
+    # handle deprecated configurations (convert old policy format to new actor/critic format)
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -156,10 +177,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    # create runner from rsl-rl
-    # convert old-style config (with 'policy' key) to new-style (with 'actor'/'critic' keys) for rsl-rl v5+
-    train_cfg = cli_args.convert_rsl_rl_cfg_dict(agent_cfg.to_dict())
+    # convert config to dict and create runner
+    train_cfg = agent_cfg.to_dict()
     runner = OnPolicyRunner(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
+    
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
@@ -171,6 +192,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    
     # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
 
