@@ -571,6 +571,16 @@ class RewardsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=""), "threshold": 100.0},
     )
 
+    foot_impact_velocity = RewTerm(
+        func=mdp.foot_impact_velocity,
+        weight=0.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "speed_threshold": 0.10,
+        }
+    )
+
     # Velocity-tracking rewards
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.5)}
@@ -600,6 +610,39 @@ class RewardsCfg:
         },
     )
 
+    feet_air_time_lin_xy = RewTerm(
+        func=mdp.feet_air_time_lin_xy_cmd,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+            "cmd_threshold": 0.1,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+        },
+    )
+
+    feet_air_time_x_neg = RewTerm(
+        func=mdp.feet_air_time_x_neg_cmd,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+            "cmd_threshold": 0.1,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+        },
+    )
+
+    feet_air_time_ang_z = RewTerm(
+        func=mdp.feet_air_time_ang_z_cmd,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+            "cmd_threshold": 0.1,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+        },
+    )
+
     feet_air_time_variance = RewTerm(
         func=mdp.feet_air_time_variance_penalty,
         weight=0,
@@ -621,6 +664,26 @@ class RewardsCfg:
         },
     )
 
+    phase_foot_trajectory_exp = RewTerm(
+        func=mdp.phase_foot_trajectory_exp,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "std": 0.12,
+            "command_threshold": 0.1,
+            "cycle_time": 0.425,  # 一个完整步态周期时长（秒）
+            "phase_offsets": (0.0, 1.0, 1.0, 0.0),
+            "gait_span": -0.00,    # x 方向摆动半跨度（米），符号决定前后扫动方向
+            "gait_psi": 0.05,   # 摆动抬脚高度尺度（米）
+            "gait_delta": 0.02, # z 方向轨迹偏置（米）
+            "x_offset": 0.0,    # 轨迹整体 x 偏移（米）
+            "stance_span": 0.0, # 支撑相在 S∈[0,2) 中占据的长度
+            "stand_ref_z_offset": -0.0, # 基准站立足端参考在 body-z 的偏置（米）
+            "velocity_weight": 0.0, # 速度误差在总误差中的权重
+        },
+    )
+    
     feet_contact = RewTerm(
         func=mdp.feet_contact,
         weight=0.0,
@@ -751,6 +814,7 @@ class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+    gait_level = CurrTerm(func=mdp.gait_level_curve)
 
     command_levels = CurrTerm(
         func=mdp.command_levels_vel,

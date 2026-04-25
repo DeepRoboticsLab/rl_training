@@ -28,11 +28,11 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.35),
+        pos=(0.0, 0.0, 0.375),
         joint_pos={
             ".*HipX_joint": 0.0,
-            ".*HipY_joint": -0.8,
-            ".*Knee_joint": 1.6,
+            ".*HipY_joint": -0.65,
+            ".*Knee_joint": 1.3,
         },
         joint_vel={".*": 0.0},
     ),
@@ -103,7 +103,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.0,
             min_delay=0,
-            max_delay=2,
+            max_delay=1,
         ),
         "wheel": DelayedPDActuatorCfg(
             joint_names_expr=[".*_wheel_joint"],
@@ -114,7 +114,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
             friction=0.0,
             armature=0.00243216,
             min_delay=0,
-            max_delay=2,
+            max_delay=1,
         ),
     },
 )

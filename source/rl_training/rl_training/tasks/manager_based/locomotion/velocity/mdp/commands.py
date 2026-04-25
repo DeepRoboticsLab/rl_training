@@ -24,6 +24,63 @@ class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
     cfg: mdp.UniformThresholdVelocityCommandCfg
     """The configuration of the command generator."""
 
+    def __init__(self, cfg: mdp.UniformThresholdVelocityCommandCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        # Additional metrics for TensorBoard.
+        self.metrics["base_z"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["knee_pos"] = torch.zeros(self.num_envs, device=self.device)
+        self._metric_step_counter = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
+        knee_joint_ids = self.robot.find_joints(".*[Kk]nee.*")[0]
+        self._knee_joint_ids = torch.tensor(knee_joint_ids, dtype=torch.long, device=self.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
+        if env_ids is None:
+            env_ids = slice(None)
+
+        extras = {}
+        for metric_name, metric_value in self.metrics.items():
+            if metric_name in {"base_z", "knee_pos"}:
+                step_count = torch.clamp(self._metric_step_counter[env_ids].float(), min=1.0)
+                extras[metric_name] = torch.mean(metric_value[env_ids] / step_count).item()
+            else:
+                extras[metric_name] = torch.mean(metric_value[env_ids]).item()
+            metric_value[env_ids] = 0.0
+
+        self._metric_step_counter[env_ids] = 0
+        self.command_counter[env_ids] = 0
+        self._resample(env_ids)
+        return extras
+
+    def _update_metrics(self):
+        super()._update_metrics()
+
+        # 1) base_z metric: root_pos_w[:, 2]
+        base_z = self.robot.data.root_pos_w[:, 2]
+
+        # 2) knee_pos metric: same formulation as joint_pos_penalty for knee joints
+        cmd = torch.linalg.norm(self.vel_command_b, dim=1)
+        body_vel = torch.linalg.norm(self.robot.data.root_lin_vel_b[:, :2], dim=1)
+
+        if self._knee_joint_ids.numel() > 0:
+            running_reward = torch.linalg.norm(
+                self.robot.data.joint_pos[:, self._knee_joint_ids]
+                - self.robot.data.default_joint_pos[:, self._knee_joint_ids],
+                dim=1,
+            )
+        else:
+            running_reward = torch.zeros(self.num_envs, device=self.device)
+
+        knee_pos = torch.where(
+            torch.logical_or(cmd > 0.1, body_vel > 0.5),
+            running_reward,
+            5.0 * running_reward,
+        )
+
+        self.metrics["base_z"] += base_z
+        self.metrics["knee_pos"] += knee_pos
+        self._metric_step_counter += 1
+
     def _resample_command(self, env_ids: Sequence[int]):
         super()._resample_command(env_ids)
         # set small commands to zero

@@ -16,8 +16,42 @@ import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from isaaclab.assets import Articulation
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.terrains import TerrainImporter
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
+
+def terrain_levels_vel(
+    env: ManagerBasedRLEnv, env_ids: Sequence[int], asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Terrain curriculum with synchronized global gait_level update."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+    command = env.command_manager.get_command("base_velocity")
+
+    distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
+    move_up = distance > terrain.cfg.terrain_generator.size[0] / 2
+    move_down = distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * 0.5
+    move_down *= ~move_up
+
+    terrain.update_env_origins(env_ids, move_up, move_down)
+
+    mean_level = torch.mean(terrain.terrain_levels.float())
+    # Local import avoids module-load circular dependency.
+    from .rewards import update_gait_level_from_terrain_mean
+
+    update_gait_level_from_terrain_mean(mean_level)
+    return mean_level
+
+
+def gait_level_curve(env: ManagerBasedRLEnv, env_ids: Sequence[int]) -> torch.Tensor:
+    """Return current global gait_level for logging in curriculum curves."""
+    from .rewards import gait_level
+
+    return torch.tensor(gait_level, device=env.device)
 
 
 def command_levels_vel(

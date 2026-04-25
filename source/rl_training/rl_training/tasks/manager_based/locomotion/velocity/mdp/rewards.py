@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import torch
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,44 @@ from isaaclab.utils.math import quat_apply_inverse, yaw_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
+
+# Global curriculum scalar in [0, 1], updated from terrain-level mean.
+gait_level: float = 0.0
+
+def update_gait_level_from_terrain_mean(terrain_level_mean: float | torch.Tensor) -> float:
+    """Update global gait_level from mean terrain level.
+
+    Mapping rule:
+    - mean <= 0.0 -> 0.0
+    - 0.0 < mean < 3.0 -> 使用 exp 函数映射
+    - mean == 3.0 -> 1.0
+    - mean >= 3.0 -> 1.0
+    """
+    global gait_level
+
+    mean_tensor = torch.as_tensor(terrain_level_mean, dtype=torch.float32)
+    if mean_tensor.numel() == 0:
+        mean_val = 0.0
+    else:
+        mean_val = float(torch.mean(mean_tensor).item())
+
+    if math.isnan(mean_val) or math.isinf(mean_val):
+        mean_val = 0.0
+
+    if mean_val <= 0.0:
+        gait_level = 0.0
+    elif mean_val < 3.0:
+        # exp 映射：mean=0 时接近 0，mean=3 时恰好为 1
+        gait_level = math.exp(mean_val - 3.0)
+    else:  # mean_val >= 3.0
+        gait_level = 1.0
+
+    return gait_level
+
+def get_gait_level_tensor(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Return global gait_level as tensor matching environment batch size."""
+    return torch.full((env.num_envs,), gait_level, device=env.device)
 
 
 def track_lin_vel_xy_exp(
@@ -35,6 +74,28 @@ def track_lin_vel_xy_exp(
     reward = torch.exp(-lin_vel_error / std**2)
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+
+def joint_torques_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize joint torques (curriculum-scaled by gait_level)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    reward = torch.sum(torch.square(asset.data.applied_torque[:, asset_cfg.joint_ids]), dim=1)
+    return reward * get_gait_level_tensor(env)
+
+
+def action_rate_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalize action rate (curriculum-scaled by gait_level)."""
+    reward = torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
+    return reward * get_gait_level_tensor(env)
+
+
+def contact_forces(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Penalize contact force violations (curriculum-scaled by gait_level)."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    violation = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] - threshold
+    reward = torch.sum(violation.clip(min=0.0), dim=1)
+    return reward * get_gait_level_tensor(env)
 
 
 def track_ang_vel_z_exp(
@@ -86,7 +147,7 @@ def joint_power(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityC
         torch.abs(asset.data.joint_vel[:, asset_cfg.joint_ids] * asset.data.applied_torque[:, asset_cfg.joint_ids]),
         dim=1,
     )
-    return reward
+    return reward * get_gait_level_tensor(env)
 
 
 def stand_still_without_cmd(
@@ -275,7 +336,7 @@ def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joint
         reward += diff
     reward *= 1 / len(mirror_joints) if len(mirror_joints) > 0 else 0
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
-    return reward
+    return reward * get_gait_level_tensor(env)
 
 
 def action_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joints: list[list[str]]) -> torch.Tensor:
@@ -625,6 +686,198 @@ def feet_slide(
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 
+
+def _bernstein_torch(n: int, k: int, t: torch.Tensor) -> torch.Tensor:
+    """Bernstein basis B_k^n(t) for tensor t in [0, 1]."""
+    coeff = float(math.comb(n, k))
+    return coeff * (1.0 - t) ** (n - k) * t**k
+
+
+def _bezier_curve_torch(control_points: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    """Evaluate Bezier curve points for batched parameter t.
+
+    Args:
+        control_points: Tensor of shape [m, 2].
+        t: Tensor of shape [N, L] in [0, 1].
+
+    Returns:
+        Tensor of shape [N, L, 2].
+    """
+    n = control_points.shape[0] - 1
+    out = torch.zeros(*t.shape, 2, device=t.device, dtype=t.dtype)
+    for k in range(n + 1):
+        out = out + _bernstein_torch(n, k, t).unsqueeze(-1) * control_points[k]
+    return out
+
+
+def _bezier_curve_derivative_torch(control_points: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    """Evaluate d/dt of Bezier curve points for batched parameter t."""
+    n = control_points.shape[0] - 1
+    delta_ctrl = n * (control_points[1:] - control_points[:-1])
+    out = torch.zeros(*t.shape, 2, device=t.device, dtype=t.dtype)
+    for k in range(n):
+        out = out + _bernstein_torch(n - 1, k, t).unsqueeze(-1) * delta_ctrl[k]
+    return out
+
+
+def phase_foot_trajectory_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    std: float = 0.1,
+    command_threshold: float = 0.1,
+    cycle_time: float = 0.4,
+    phase_offsets: tuple[float, ...] = (0.0, 1.0, 1.0, 0.0),
+    gait_span: float = -0.008,
+    gait_psi: float = 0.15,
+    gait_delta: float = 0.03,
+    x_offset: float = 0.0,
+    stance_span: float = 0.20,
+    stand_ref_z_offset: float = -0.2,
+    velocity_weight: float = 0.5,
+) -> torch.Tensor:
+    """Track MuJoCo-style phase foot trajectory in body frame with exponential kernel."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_ids = asset_cfg.body_ids
+    num_feet = len(body_ids)
+
+    if num_feet == 0:
+        return torch.zeros(env.num_envs, device=env.device)
+    if len(phase_offsets) != num_feet:
+        raise ValueError(f"phase_offsets length ({len(phase_offsets)}) must match tracked feet ({num_feet}).")
+
+    # Build and cache base-fixed stand references from the first call.
+    if (not hasattr(env, "phase_foot_ref_body")) or (env.phase_foot_ref_body.shape[1] != num_feet):
+        rel_foot_pos_w = asset.data.body_pos_w[:, body_ids, :] - asset.data.root_pos_w[:, :].unsqueeze(1)
+        foot_pos_b = torch.zeros(env.num_envs, num_feet, 3, device=env.device)
+        for i in range(num_feet):
+            foot_pos_b[:, i, :] = math_utils.quat_apply_inverse(asset.data.root_quat_w, rel_foot_pos_w[:, i, :])
+        ref = foot_pos_b[0].detach().clone()
+        ref[:, 2] += stand_ref_z_offset
+        env.phase_foot_ref_body = ref.unsqueeze(0)
+
+    stand_ref_body = env.phase_foot_ref_body.to(env.device).expand(env.num_envs, -1, -1)
+
+    # Build phase S in [0, 2).
+    phase_time = env.episode_length_buf.float() * env.step_dt
+    phase_offsets_t = torch.tensor(phase_offsets, device=env.device, dtype=phase_time.dtype).unsqueeze(0)
+    S = torch.remainder((2.0 * phase_time / max(cycle_time, 1e-6)).unsqueeze(1) + phase_offsets_t, 2.0)
+
+    # MuJoCo-like piecewise trajectory in local (q, z).
+    tau = float(gait_span)
+    psi = float(gait_psi)
+    delta = float(gait_delta)
+    stance_span = float(stance_span)
+    stance_span = min(max(stance_span, 1e-6), 2.0 - 1e-6)
+
+    q = torch.zeros_like(S)
+    z = torch.zeros_like(S)
+    dq_dS = torch.zeros_like(S)
+    dz_dS = torch.zeros_like(S)
+
+    stance_mask = S < stance_span
+    if stance_mask.any():
+        s_stance = S / stance_span
+        q_stance = tau * (1.0 - 2.0 * s_stance)
+        z_stance = torch.full_like(S, delta)
+        dq_dS_stance = torch.full_like(S, -2.0 * tau / stance_span)
+        dz_dS_stance = torch.zeros_like(S)
+
+        q = torch.where(stance_mask, q_stance, q)
+        z = torch.where(stance_mask, z_stance, z)
+        dq_dS = torch.where(stance_mask, dq_dS_stance, dq_dS)
+        dz_dS = torch.where(stance_mask, dz_dS_stance, dz_dS)
+
+    swing_mask = ~stance_mask
+    if swing_mask.any():
+        t_bezier = torch.clamp((S - stance_span) / (2.0 - stance_span), 0.0, 1.0)
+        ctrl = torch.tensor(
+            [
+                [-tau, 0.0],
+                [-0.95 * tau, 0.80 * psi],
+                [-0.55 * tau, 1.00 * psi],
+                [0.55 * tau, 1.00 * psi],
+                [0.95 * tau, 0.80 * psi],
+                [tau, 0.0],
+            ],
+            device=env.device,
+            dtype=S.dtype,
+        )
+        qz_swing = _bezier_curve_torch(ctrl, t_bezier)
+        dqz_dt = _bezier_curve_derivative_torch(ctrl, t_bezier)
+        dt_dS = 1.0 / (2.0 - stance_span)
+
+        q = torch.where(swing_mask, qz_swing[..., 0], q)
+        z = torch.where(swing_mask, qz_swing[..., 1] + delta, z)
+        dq_dS = torch.where(swing_mask, dqz_dt[..., 0] * dt_dS, dq_dS)
+        dz_dS = torch.where(swing_mask, dqz_dt[..., 1] * dt_dS, dz_dS)
+
+    dS_dt = 2.0 / max(cycle_time, 1e-6)
+    dq_dt = dq_dS * dS_dt
+    dz_dt = dz_dS * dS_dt
+
+    ref_pos_b = stand_ref_body + torch.stack(
+        [q + float(x_offset), torch.zeros_like(q), z],
+        dim=-1,
+    )
+    ref_vel_b = torch.stack(
+        [dq_dt, torch.zeros_like(dq_dt), dz_dt],
+        dim=-1,
+    )
+
+    # Actual foot states in body frame.
+    rel_foot_pos_w = asset.data.body_pos_w[:, body_ids, :] - asset.data.root_pos_w[:, :].unsqueeze(1)
+    rel_foot_vel_w = asset.data.body_lin_vel_w[:, body_ids, :] - asset.data.root_lin_vel_w[:, :].unsqueeze(1)
+    foot_pos_b = torch.zeros(env.num_envs, num_feet, 3, device=env.device)
+    foot_vel_b = torch.zeros(env.num_envs, num_feet, 3, device=env.device)
+    for i in range(num_feet):
+        foot_pos_b[:, i, :] = math_utils.quat_apply_inverse(asset.data.root_quat_w, rel_foot_pos_w[:, i, :])
+        foot_vel_b[:, i, :] = math_utils.quat_apply_inverse(asset.data.root_quat_w, rel_foot_vel_w[:, i, :])
+
+    pos_offset = foot_pos_b - ref_pos_b
+    vel_offset = foot_vel_b - ref_vel_b
+
+    # Per-dimension (x, y, z) errors over feet for each environment.
+    pos_err = torch.sum(torch.square(pos_offset), dim=1)
+    vel_err = torch.sum(torch.square(vel_offset), dim=1)
+
+    # Scalar total error for reward computation.
+    total_err = torch.sum(pos_err, dim=1) + float(velocity_weight) * torch.sum(vel_err, dim=1)
+    reward = torch.exp(-total_err / max(std, 1e-6) ** 2)
+
+    # Command-gating follows full (x, y, yaw) command magnitude.
+    command = env.command_manager.get_command(command_name)
+    gate = torch.linalg.norm(command[:, :3], dim=1) > command_threshold
+
+    # info for debugging
+    pos_offset_xyz_mean = torch.mean(pos_offset, dim=(0, 1))
+    vel_offset_xyz_mean = torch.mean(vel_offset, dim=(0, 1))
+    # print(
+    #     "Offset xyz mean | "
+    #     f"pos(x,y,z)=({pos_offset_xyz_mean[0].item():.4f}, {pos_offset_xyz_mean[1].item():.4f}, {pos_offset_xyz_mean[2].item():.4f}) | "
+    #     f"vel(x,y,z)=({vel_offset_xyz_mean[0].item():.4f}, {vel_offset_xyz_mean[1].item():.4f}, {vel_offset_xyz_mean[2].item():.4f})"
+    # )
+    # print("Reward:", reward * gate.float())
+    return reward * gate.float() * get_gait_level_tensor(env)
+
+def foot_impact_velocity(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    speed_threshold: float = 0.10,
+) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids].float()
+    foot_lin_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :]
+
+    downward_speed = torch.clamp(-foot_lin_vel[:, :, 2], min=0.0)
+    downward_speed = torch.clamp(downward_speed - speed_threshold, min=0.0)
+
+    penalty = torch.sum(first_contact * torch.square(downward_speed), dim=1)
+    return penalty * get_gait_level_tensor(env)
+
 # def stand_still_joint_deviation_l1(
 #     env, command_name: str, command_threshold: float = 0.06, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 # ) -> torch.Tensor:
@@ -699,7 +952,7 @@ def base_height_l2(
     # Compute the L2 squared penalty
     reward = torch.square(asset.data.root_pos_w[:, 2] - adjusted_target_height)
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
-    return reward
+    return reward * get_gait_level_tensor(env)
 
 
 def lin_vel_z_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -743,6 +996,67 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     reward = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+def feet_air_time_lin_xy_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+    cmd_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Air-time reward gated by planar linear velocity command (x, y)."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Core logic unchanged
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+
+    # Gate by planar linear velocity command only
+    cmd_lin_xy = torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    reward *= cmd_lin_xy > cmd_threshold
+    return reward * get_gait_level_tensor(env)
+
+def feet_air_time_x_neg_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+    cmd_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Air-time reward gated by negative x velocity command only."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Core logic unchanged
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+
+    # Gate: x command must be negative and exceed magnitude threshold
+    cmd_x = env.command_manager.get_command(command_name)[:, 0]
+    reward *= cmd_x < 0.0
+
+    return reward
+
+def feet_air_time_ang_z_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+    cmd_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Air-time reward gated by yaw angular velocity command (z)."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Core logic unchanged
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+
+    # Gate by angular velocity command only
+    cmd_ang_z = torch.abs(env.command_manager.get_command(command_name)[:, 2])
+    reward *= cmd_ang_z > cmd_threshold
+    return reward * get_gait_level_tensor(env)
 
 def feet_air_time_including_ang_z(
     env: ManagerBasedRLEnv, command_name: str, sensor_cfg: SceneEntityCfg, threshold: float
