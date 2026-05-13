@@ -13,7 +13,7 @@ import inspect
 import math
 import sys
 from dataclasses import MISSING
-
+from isaaclab.sim import PhysxCfg, SimulationCfg
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
@@ -834,6 +834,18 @@ class CurriculumCfg:
 class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
+    # env
+    decimation = 4
+    episode_length_s = 20.0
+    # simulation
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 200,
+        render_interval=decimation,
+        physx=PhysxCfg(
+            
+             gpu_collision_stack_size=2**27,           # 134,217,728
+        ),
+    )
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -855,7 +867,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        self.sim.physx.gpu_max_rigid_patch_count = 2**19
         self.sim.physx.max_position_iteration_count = 4
         self.sim.physx.max_velocity_iteration_count = 1
         # update sensor update periods
