@@ -1097,3 +1097,162 @@ def lin_vel_xy_l2_with_ang_z_command(
     # reward *= torch.sum(torch.square(env.command_manager.get_command(command_name)[:, 2:]), dim=1) > command_threshold
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+
+def rotation_gait_status(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    group_a_body_names: list[str],
+    group_b_body_names: list[str],
+    target_height: float = 0.05,
+    lin_vel_threshold: float = 0.5,
+    ang_vel_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Reward alternating contact pattern during rotation.
+
+    When linear velocity command is small and angular velocity command is significant,
+    rewards the robot for having one diagonal group grounded while the other is lifted
+    by at least `target_height` above the grounded group.
+
+    Groups are diagonal leg pairs (e.g., FL+HR vs FR+HL).
+    """
+    # Cache body IDs on first call
+    cache_key = "_rotation_gait_status_cache"
+    if not hasattr(env, cache_key):
+        _sensor = env.scene.sensors[sensor_cfg.name]
+        _asset = env.scene[asset_cfg.name]
+        group_a_ids = [_sensor.find_bodies(n)[0][0] for n in group_a_body_names]
+        group_b_ids = [_sensor.find_bodies(n)[0][0] for n in group_b_body_names]
+        group_a_body_ids = [_asset.find_bodies(n)[0][0] for n in group_a_body_names]
+        group_b_body_ids = [_asset.find_bodies(n)[0][0] for n in group_b_body_names]
+        setattr(env, cache_key, {
+            "group_a_sensor_ids": group_a_ids,
+            "group_b_sensor_ids": group_b_ids,
+            "group_a_body_ids": group_a_body_ids,
+            "group_b_body_ids": group_b_body_ids,
+        })
+
+    cache = getattr(env, cache_key)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Gate: only active when rotating in place
+    command = env.command_manager.get_command(command_name)
+    lin_vel_cmd = torch.linalg.norm(command[:, :2], dim=1)
+    ang_vel_cmd = torch.abs(command[:, 2])
+    gate = (lin_vel_cmd < lin_vel_threshold) & (ang_vel_cmd > ang_vel_threshold)
+
+    # Contact state: True if in contact
+    contact_time = contact_sensor.data.current_contact_time
+    group_a_contact = contact_time[:, cache["group_a_sensor_ids"]] > 0  # [N, 2]
+    group_b_contact = contact_time[:, cache["group_b_sensor_ids"]] > 0  # [N, 2]
+
+    # Height of each group's feet (world z)
+    z_a = asset.data.body_pos_w[:, cache["group_a_body_ids"], 2]  # [N, 2]
+    z_b = asset.data.body_pos_w[:, cache["group_b_body_ids"], 2]  # [N, 2]
+    mean_z_a = z_a.mean(dim=1)  # [N]
+    mean_z_b = z_b.mean(dim=1)  # [N]
+
+    # Pattern 1: Group A grounded, Group B lifted
+    a_grounded = group_a_contact.all(dim=1).float()  # [N]
+    b_lifted_height = torch.clamp(mean_z_b - mean_z_a - target_height, min=0.0)
+    pattern_1 = a_grounded * torch.exp(-torch.square(b_lifted_height - target_height) / (0.02**2))
+    # Simpler: reward if height diff >= target_height
+    pattern_1 = a_grounded * (mean_z_b - mean_z_a > target_height).float()
+
+    # Pattern 2: Group B grounded, Group A lifted
+    b_grounded = group_b_contact.all(dim=1).float()  # [N]
+    pattern_2 = b_grounded * (mean_z_a - mean_z_b > target_height).float()
+
+    # Reward is max of either valid pattern
+    reward = torch.maximum(pattern_1, pattern_2)
+    reward *= gate.float()
+    return reward * get_gait_level_tensor(env)
+
+
+class RotationGaitSymmetry(ManagerTermBase):
+    """Reward symmetric contact duty cycle during rotation.
+
+    Tracks contact history over a 5-second window and rewards each diagonal leg group
+    for spending roughly equal time in contact vs air (50/50 duty cycle).
+
+    Only active when linear velocity command is small and angular velocity command
+    is significant (rotating in place).
+    """
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.command_name: str = cfg.params["command_name"]
+        self.lin_vel_threshold: float = cfg.params["lin_vel_threshold"]
+        self.ang_vel_threshold: float = cfg.params["ang_vel_threshold"]
+        self.target_duty: float = cfg.params["target_duty"]
+        self.std: float = cfg.params["std"]
+
+        # Resolve body IDs from contact sensor
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        group_a_body_names = cfg.params["group_a_body_names"]
+        group_b_body_names = cfg.params["group_b_body_names"]
+        self.group_a_ids = [self.contact_sensor.find_bodies(n)[0][0] for n in group_a_body_names]
+        self.group_b_ids = [self.contact_sensor.find_bodies(n)[0][0] for n in group_b_body_names]
+
+        # Circular buffer: [num_envs, num_feet, buffer_size]
+        # buffer_size = 5 seconds / step_dt
+        self.buffer_size = int(5.0 / env.step_dt)
+        num_feet = len(self.group_a_ids) + len(self.group_b_ids)
+        self.all_ids = self.group_a_ids + self.group_b_ids
+        self.contact_buffer = torch.zeros(
+            env.num_envs, num_feet, self.buffer_size, device=env.device
+        )
+        self.buffer_idx = 0
+        self.buffer_filled = False  # Track if buffer has filled at least once
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        """Clear buffer for reset envs."""
+        if env_ids is not None and len(env_ids) > 0:
+            self.contact_buffer[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        sensor_cfg: SceneEntityCfg,
+        group_a_body_names: list[str],
+        group_b_body_names: list[str],
+        target_duty: float,
+        std: float,
+        lin_vel_threshold: float,
+        ang_vel_threshold: float,
+    ) -> torch.Tensor:
+        # Update buffer with current contact state
+        contact_time = self.contact_sensor.data.current_contact_time
+        in_contact = (contact_time[:, self.all_ids] > 0).float()  # [N, num_feet]
+        self.contact_buffer[:, :, self.buffer_idx] = in_contact
+        self.buffer_idx = (self.buffer_idx + 1) % self.buffer_size
+        if not self.buffer_filled and self.buffer_idx == 0:
+            self.buffer_filled = True
+
+        # Gate: only active when rotating in place
+        command = env.command_manager.get_command(self.command_name)
+        lin_vel_cmd = torch.linalg.norm(command[:, :2], dim=1)
+        ang_vel_cmd = torch.abs(command[:, 2])
+        gate = (lin_vel_cmd < self.lin_vel_threshold) & (ang_vel_cmd > self.ang_vel_threshold)
+
+        # Compute duty cycle for each group over the buffer window
+        num_a = len(self.group_a_ids)
+        # Group A: first num_a entries, Group B: remaining
+        duty_a = self.contact_buffer[:, :num_a, :].mean(dim=(1, 2))  # [N]
+        duty_b = self.contact_buffer[:, num_a:, :].mean(dim=(1, 2))  # [N]
+
+        # Reward: exp kernel on deviation from target duty (0.5)
+        reward_a = torch.exp(-torch.square(duty_a - self.target_duty) / (self.std**2))
+        reward_b = torch.exp(-torch.square(duty_b - self.target_duty) / (self.std**2))
+        reward = reward_a * reward_b
+
+        # Only give reward once buffer has meaningful data
+        if not self.buffer_filled:
+            reward = reward * (self.buffer_idx / self.buffer_size)
+
+        reward *= gate.float()
+        return reward * get_gait_level_tensor(env)

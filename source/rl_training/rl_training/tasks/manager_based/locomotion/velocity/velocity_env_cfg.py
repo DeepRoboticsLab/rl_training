@@ -774,6 +774,37 @@ class RewardsCfg:
 
     upward = RewTerm(func=mdp.upward, weight=0.0)
 
+    # Rotation gait rewards
+    rotation_gait_status = RewTerm(
+        func=mdp.rotation_gait_status,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "asset_cfg": SceneEntityCfg("robot", body_names=""),
+            "group_a_body_names": [],
+            "group_b_body_names": [],
+            "target_height": 0.05,
+            "lin_vel_threshold": 0.5,
+            "ang_vel_threshold": 0.05,
+        },
+    )
+
+    rotation_gait_symmetry = RewTerm(
+        func=mdp.RotationGaitSymmetry,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "group_a_body_names": [],
+            "group_b_body_names": [],
+            "target_duty": 0.5,
+            "std": 0.2,
+            "lin_vel_threshold": 0.5,
+            "ang_vel_threshold": 0.05,
+        },
+    )
+
     # lin_vel_xy_l2_with_ang_z_command = RewTerm(
     #     func=mdp.lin_vel_xy_l2_with_ang_z_command,
     #     weight=0,

@@ -150,8 +150,8 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.16)
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
 
-        self.events.randomize_rigid_body_material.params["static_friction_range"] = [0.35, 1.5]
-        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = [0.35, 1.5]
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = [0.35, 2.0]
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = [0.35, 2.0]
         self.events.randomize_rigid_body_material.params["restitution_range"] = [0.0, 0.7]
 
         # ------------------------------Rewards------------------------------
@@ -241,6 +241,18 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("fl_wheel", "hr_wheel"), ("fr_wheel", "hl_wheel"))
         self.rewards.upward.weight = 0.08
 
+        # Rotation gait rewards
+        self.rewards.rotation_gait_status.weight = 1.0
+        self.rewards.rotation_gait_status.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_status.params["asset_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_status.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
+        self.rewards.rotation_gait_status.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
+
+        self.rewards.rotation_gait_symmetry.weight = 1.0
+        self.rewards.rotation_gait_symmetry.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_symmetry.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
+        self.rewards.rotation_gait_symmetry.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
+
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "DeeproboticsM20RoughEnvCfg":
             self.disable_zero_weight_rewards()
@@ -257,4 +269,4 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Commands------------------------------
         self.commands.base_velocity.ranges.lin_vel_x = (-2.0, 2.0)
         self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-2.0, 2.0)
