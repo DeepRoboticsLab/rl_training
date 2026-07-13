@@ -12,7 +12,7 @@ from rl_training.assets import ISAACLAB_ASSETS_DATA_DIR
 
 DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Lite3/usd/Lite3.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Lite3/Lite3_usd/Lite3.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -65,7 +65,7 @@ DEEPROBOTICS_LITE3_CFG = ArticulationCfg(
 
 DEEPROBOTICS_M20_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/M20/usd/M20.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/M20/M20_usd/M20.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -81,13 +81,13 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.52),
+        pos=(0.0, 0.0, 0.58),
         joint_pos={
             ".*hipx_joint": 0.0,
-            "f[l,r]_hipy_joint": -0.6,
-            "h[l,r]_hipy_joint": 0.6,
-            "f[l,r]_knee_joint": 1.0,
-            "h[l,r]_knee_joint": -1.0,
+            "f[l,r]_hipy_joint": -0.3,
+            "h[l,r]_hipy_joint": 0.3,
+            "f[l,r]_knee_joint": 0.6,
+            "h[l,r]_knee_joint": -0.6,
             ".*wheel_joint": 0.0,
         },
         joint_vel={".*": 0.0},

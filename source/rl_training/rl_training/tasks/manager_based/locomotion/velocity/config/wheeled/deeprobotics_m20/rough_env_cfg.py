@@ -161,8 +161,8 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # Root penalties
         self.rewards.lin_vel_z_l2.weight = -2.0
         self.rewards.ang_vel_xy_l2.weight = -0.02
-        self.rewards.flat_orientation_l2.weight = 0
-        self.rewards.base_height_l2.weight = -0.5
+        self.rewards.flat_orientation_l2.weight = -50.0
+        self.rewards.base_height_l2.weight = -0.0 # -0.5
         self.rewards.base_height_l2.params["target_height"] = 0.40
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.body_lin_acc_l2.weight = 0
@@ -182,20 +182,36 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_acc_wheel_l2.weight = -1e-7
         self.rewards.joint_acc_wheel_l2.params["asset_cfg"].joint_names = self.wheel_joint_names
         # self.rewards.create_joint_deviation_l1_rewterm("joint_deviation_hip_l1", -0.2, [".*_hip_joint"])
-        self.rewards.joint_pos_limits.weight = -5.0
+        self.rewards.joint_pos_limits.weight = -0.0 # -5.0
         self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.joint_vel_limits.weight = 0
         self.rewards.joint_vel_limits.params["asset_cfg"].joint_names = self.wheel_joint_names
-        self.rewards.joint_power.weight = -2e-5
+        self.rewards.joint_power.weight = -0.0 # -2e-5
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.stand_still.weight = -2.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.hipx_joint_pos_penalty.weight = -0.4
+        self.rewards.hipx_joint_pos_penalty.weight = -3.0
         self.rewards.hipx_joint_pos_penalty.params["asset_cfg"].joint_names = self.hipx_joint_names
-        self.rewards.hipy_joint_pos_penalty.weight = -0.1
+        self.rewards.hipy_joint_pos_penalty.weight = -1.0
         self.rewards.hipy_joint_pos_penalty.params["asset_cfg"].joint_names = self.hipy_joint_names
-        self.rewards.knee_joint_pos_penalty.weight = -0.1
+        self.rewards.hipy_joint_pos_penalty.func = mdp.joint_pos_penalty_except_turn_side_cmd
+        self.rewards.hipy_joint_pos_penalty.params["ang_cmd_threshold"] = 0.1
+        self.rewards.hipy_joint_pos_penalty.params["y_cmd_threshold"] = 0.1
+        self.rewards.hipy_joint_pos_penalty.params["xy_norm_max"] = 0.1
+        self.rewards.hipy_joint_pos_penalty.params["xz_norm_max"] = 0.1
+        self.rewards.hipy_joint_pos_penalty.params["sensor_cfg"] = SceneEntityCfg("height_scanner_base")
+        self.rewards.hipy_joint_pos_penalty.params["terrain_height_threshold"] = 0.06
+        self.rewards.hipy_joint_pos_penalty.params["high_terrain_penalty_scale"] = 0.1
+        self.rewards.knee_joint_pos_penalty.weight = -0.5
         self.rewards.knee_joint_pos_penalty.params["asset_cfg"].joint_names = self.knee_joint_names
+        self.rewards.knee_joint_pos_penalty.func = mdp.joint_pos_penalty_except_turn_side_cmd
+        self.rewards.knee_joint_pos_penalty.params["ang_cmd_threshold"] = 0.1
+        self.rewards.knee_joint_pos_penalty.params["y_cmd_threshold"] = 0.1
+        self.rewards.knee_joint_pos_penalty.params["xy_norm_max"] = 0.1
+        self.rewards.knee_joint_pos_penalty.params["xz_norm_max"] = 0.1
+        self.rewards.knee_joint_pos_penalty.params["sensor_cfg"] = SceneEntityCfg("height_scanner_base")
+        self.rewards.knee_joint_pos_penalty.params["terrain_height_threshold"] = 0.06
+        self.rewards.knee_joint_pos_penalty.params["high_terrain_penalty_scale"] = 0.1
         self.rewards.wheel_vel_penalty.weight = 0
         self.rewards.wheel_vel_penalty.params["sensor_cfg"].body_names = self.foot_link_name
         self.rewards.wheel_vel_penalty.params["asset_cfg"].joint_names = self.wheel_joint_names
@@ -207,6 +223,7 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # Action penalties
         self.rewards.action_rate_l2.weight = -0.01
+        self.rewards.action_smooth_l2.weight = -0.01
 
         # Contact sensor
         self.rewards.undesired_contacts.weight = -1.0
@@ -215,8 +232,8 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
         # Velocity-tracking rewards
-        self.rewards.track_lin_vel_xy_exp.weight = 2.0 # 1.8
-        self.rewards.track_ang_vel_z_exp.weight = 1.0 # 1.2
+        self.rewards.track_lin_vel_xy_exp.weight = 5.0
+        self.rewards.track_ang_vel_z_exp.weight = 3.0
 
         # Others
         self.rewards.feet_air_time.weight = 0
@@ -224,13 +241,21 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_contact.weight = 0
         self.rewards.feet_contact.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_contact_without_cmd.weight = 0.1
+        self.rewards.feet_contact_without_cmd.weight = 0.0 # 0.1
         self.rewards.feet_contact_without_cmd.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_air_time_ang_z.weight = 50.0 # 5.0
+        self.rewards.feet_air_time_ang_z.params["threshold"] = 0.2
+        self.rewards.feet_air_time_ang_z.params["foot_height_threshold"] = 0.00
+        self.rewards.feet_air_time_ang_z.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_air_time_ang_z.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_stumble.weight = 0
         self.rewards.feet_stumble.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.weight = 0
         self.rewards.feet_slide.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.params["asset_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_slide_ang_z_cmd.weight = -2.0
+        self.rewards.feet_slide_ang_z_cmd.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_slide_ang_z_cmd.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height.weight = 0
         self.rewards.feet_height.params["target_height"] = 0.1
         self.rewards.feet_height.params["asset_cfg"].body_names = [self.foot_link_name]
@@ -239,8 +264,21 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_gait.weight = 0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("fl_wheel", "hr_wheel"), ("fr_wheel", "hl_wheel"))
-        self.rewards.upward.weight = 0.08
+        self.rewards.upward.weight = 0.0 # 0.08
 
+        # Rotation gait rewards
+        self.rewards.rotation_gait_status.weight = 1.0
+        self.rewards.rotation_gait_status.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_status.params["asset_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_status.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
+        self.rewards.rotation_gait_status.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
+
+        self.rewards.rotation_gait_symmetry.weight = 10.0
+        self.rewards.rotation_gait_symmetry.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.rotation_gait_symmetry.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
+        self.rewards.rotation_gait_symmetry.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
+
+        self.rewards.bad_orientation_penalty.weight = -1e+3 #-1e+3
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "DeeproboticsM20RoughEnvCfg":
             self.disable_zero_weight_rewards()
@@ -248,7 +286,7 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Terminations------------------------------
         # self.terminations.illegal_contact.params["sensor_cfg"].body_names = [self.base_link_name]
         self.terminations.illegal_contact = None
-        self.terminations.bad_orientation_2 = None
+        # self.terminations.bad_orientation_2 = None
 
         # ------------------------------Curriculums------------------------------
         # self.curriculum.command_levels.params["range_multiplier"] = (0.2, 1.0)
@@ -257,4 +295,12 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # ------------------------------Commands------------------------------
         self.commands.base_velocity.ranges.lin_vel_x = (-2.0, 2.0)
         self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-2.0, 2.0)
+
+        # Fixed-proportion special-case samples (prevent forgetting)
+        # These use the original full ranges and are NOT affected by curriculum.
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.rel_zero_vel_envs = 0.2
+        self.commands.base_velocity.rel_only_lin_y_envs = 0.02
+        self.commands.base_velocity.rel_only_lin_x_envs = 0.02
+        self.commands.base_velocity.rel_only_ang_z_envs = 0.2

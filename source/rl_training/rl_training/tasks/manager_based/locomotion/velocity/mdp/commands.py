@@ -19,7 +19,12 @@ if TYPE_CHECKING:
 
 
 class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
-    """Command generator that generates a velocity command in SE(2) from uniform distribution with threshold."""
+    """Command generator that generates a velocity command in SE(2) from uniform distribution with threshold.
+
+    Supports fixed-proportion special-case samples that always use the original (full)
+    velocity ranges, preventing catastrophic forgetting of basic skills as the curriculum
+    narrows the command range.
+    """
 
     cfg: mdp.UniformThresholdVelocityCommandCfg
     """The configuration of the command generator."""
@@ -33,6 +38,13 @@ class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
 
         knee_joint_ids = self.robot.find_joints(".*[Kk]nee.*")[0]
         self._knee_joint_ids = torch.tensor(knee_joint_ids, dtype=torch.long, device=self.device)
+
+        # ---- Store original full ranges for special-case sampling ----
+        # These are used by special-case envs so they always sample from the
+        # full range regardless of curriculum changes.
+        self._full_ranges_lin_vel_x = tuple(cfg.ranges.lin_vel_x)
+        self._full_ranges_lin_vel_y = tuple(cfg.ranges.lin_vel_y)
+        self._full_ranges_ang_vel_z = tuple(cfg.ranges.ang_vel_z)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
         if env_ids is None:
@@ -86,12 +98,118 @@ class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
         # set small commands to zero
         self.vel_command_b[env_ids, :2] *= (torch.norm(self.vel_command_b[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
+        # ---- Fixed-proportion special-case samples ----
+        # These override the sampled command for a fixed fraction of envs,
+        # always using the original (full) velocity ranges so they are not
+        # affected by curriculum narrowing.  This prevents catastrophic
+        # forgetting of basic skills.
+        n = len(env_ids)
+        if n == 0:
+            return
+
+        r = torch.empty(n, device=self.device)
+        # Assign each env a slot in [0, 1).  Slots are laid out as:
+        #   [0,                          rel_zero_vel          ) -> zero velocity
+        #   [rel_zero_vel,              +rel_only_lin_y        ) -> only lin_y
+        #   [rel_zero_vel+rel_only_lin_y, +rel_only_lin_x      ) -> only lin_x
+        #   [...,                        +rel_only_ang_z        ) -> only ang_z
+        #   [...,                        1.0                    ) -> normal (no override)
+        slot = r.uniform_(0.0, 1.0)
+        cum = 0.0
+
+        # --- Zero velocity (standing) ---
+        rel_zero_vel = self.cfg.rel_zero_vel_envs
+        mask_zero = slot < cum + rel_zero_vel
+        cum += rel_zero_vel
+
+        # --- Only linear y ---
+        rel_only_lin_y = self.cfg.rel_only_lin_y_envs
+        mask_only_y = (slot >= cum) & (slot < cum + rel_only_lin_y)
+        cum += rel_only_lin_y
+
+        # --- Only linear x ---
+        rel_only_lin_x = self.cfg.rel_only_lin_x_envs
+        mask_only_x = (slot >= cum) & (slot < cum + rel_only_lin_x)
+        cum += rel_only_lin_x
+
+        # --- Only angular z ---
+        rel_only_ang_z = self.cfg.rel_only_ang_z_envs
+        mask_only_ang = (slot >= cum) & (slot < cum + rel_only_ang_z)
+        cum += rel_only_ang_z
+
+        ids_zero = env_ids[mask_zero]
+        ids_only_y = env_ids[mask_only_y]
+        ids_only_x = env_ids[mask_only_x]
+        ids_only_ang = env_ids[mask_only_ang]
+
+        # Apply zero velocity
+        if len(ids_zero) > 0:
+            self.vel_command_b[ids_zero, :] = 0.0
+            self.is_standing_env[ids_zero] = True
+            self.is_heading_env[ids_zero] = False
+
+        # Apply only-lin_y: vx=0, vy from full range, wz=0
+        if len(ids_only_y) > 0:
+            r_y = torch.empty(len(ids_only_y), device=self.device)
+            self.vel_command_b[ids_only_y, 0] = 0.0
+            self.vel_command_b[ids_only_y, 1] = r_y.uniform_(*self._full_ranges_lin_vel_y)
+            self.vel_command_b[ids_only_y, 2] = 0.0
+            self.is_standing_env[ids_only_y] = False
+            self.is_heading_env[ids_only_y] = False
+
+        # Apply only-lin_x: vx from full range, vy=0, wz=0
+        if len(ids_only_x) > 0:
+            r_x = torch.empty(len(ids_only_x), device=self.device)
+            self.vel_command_b[ids_only_x, 0] = r_x.uniform_(*self._full_ranges_lin_vel_x)
+            self.vel_command_b[ids_only_x, 1] = 0.0
+            self.vel_command_b[ids_only_x, 2] = 0.0
+            self.is_standing_env[ids_only_x] = False
+            self.is_heading_env[ids_only_x] = False
+
+        # Apply only-ang_z: vx=0, vy=0, heading from full range
+        if len(ids_only_ang) > 0:
+            r_h = torch.empty(len(ids_only_ang), device=self.device)
+            self.vel_command_b[ids_only_ang, 0] = 0.0
+            self.vel_command_b[ids_only_ang, 1] = 0.0
+            self.is_standing_env[ids_only_ang] = False
+            self.is_heading_env[ids_only_ang] = True
+            if self.cfg.heading_command:
+                self.heading_target[ids_only_ang] = r_h.uniform_(*self.cfg.ranges.heading)
+
 
 @configclass
 class UniformThresholdVelocityCommandCfg(mdp.UniformVelocityCommandCfg):
     """Configuration for the uniform threshold velocity command generator."""
 
     class_type: type = UniformThresholdVelocityCommand
+
+    rel_zero_vel_envs: float = 0.07
+    """Fraction of environments that always receive a zero-velocity command.
+
+    These samples prevent forgetting of standing-still behavior and are not
+    affected by the command-level curriculum.
+    """
+
+    rel_only_lin_y_envs: float = 0.07
+    """Fraction of environments that receive only a lateral (y) velocity command.
+
+    vx and wz are forced to zero; vy is sampled from the original full range.
+    Not affected by the command-level curriculum.
+    """
+
+    rel_only_lin_x_envs: float = 0.07
+    """Fraction of environments that receive only a forward/backward (x) velocity command.
+
+    vy and wz are forced to zero; vx is sampled from the original full range.
+    Not affected by the command-level curriculum.
+    """
+
+    rel_only_ang_z_envs: float = 0.07
+    """Fraction of environments that receive only an angular-velocity (heading) command.
+
+    vx and vy are forced to zero; heading is sampled from the full range.
+    Not affected by the command-level curriculum.
+    """
 
 
 class DiscreteCommandController(CommandTerm):

@@ -111,7 +111,7 @@ class CommandsCfg:
     base_velocity = mdp.UniformThresholdVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.02,
+        rel_standing_envs=0.3,
         rel_heading_envs=1.0,
         heading_command=True,
         heading_control_stiffness=0.5,
@@ -556,6 +556,10 @@ class RewardsCfg:
     # smoothness_1 = RewTerm(func=mdp.smoothness_1, weight=0.0)  # Same as action_rate_l2
     # smoothness_2 = RewTerm(func=mdp.smoothness_2, weight=0.0)  # Unvaliable now
 
+    action_smooth_l2 = RewTerm(
+        func=mdp.action_smooth_l2,
+        weight=0.0,
+    )
     # Contact sensor
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
@@ -639,6 +643,8 @@ class RewardsCfg:
             "command_name": "base_velocity",
             "threshold": 0.5,
             "cmd_threshold": 0.1,
+            "foot_height_threshold": 0.05,
+            "asset_cfg": SceneEntityCfg("robot", body_names=""),
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
         },
     )
@@ -720,6 +726,18 @@ class RewardsCfg:
         },
     )
 
+    feet_slide_ang_z_cmd = RewTerm(
+        func=mdp.feet_slide_ang_z_cmd,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "asset_cfg": SceneEntityCfg("robot", body_names=""),
+            "cmd_lin_threshold": 0.1,
+            "cmd_ang_threshold": 0.1,
+        },
+    )
+
     stand_still = RewTerm(
         func=mdp.stand_still_joint_deviation_l1,
         weight=0,
@@ -783,6 +801,42 @@ class RewardsCfg:
     #     },
     # ) # negetive
 
+    # Rotation gait rewards
+    rotation_gait_status = RewTerm(
+        func=mdp.rotation_gait_status,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "asset_cfg": SceneEntityCfg("robot", body_names=""),
+            "group_a_body_names": [],
+            "group_b_body_names": [],
+            "target_height": 0.05,
+            "lin_vel_threshold": 0.5,
+            "ang_vel_threshold": 0.05,
+        },
+    )
+
+    rotation_gait_symmetry = RewTerm(
+        func=mdp.RotationGaitSymmetry,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "group_a_body_names": [],
+            "group_b_body_names": [],
+            "target_duty": 0.5,
+            "std": 0.2,
+            "lin_vel_threshold": 0.5,
+            "ang_vel_threshold": 0.05,
+        },
+    )
+
+    bad_orientation_penalty = RewTerm(
+        func=mdp.bad_orientation_penalty,
+        weight=0.0,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
 
 @configclass
 class TerminationsCfg:
@@ -834,18 +888,6 @@ class CurriculumCfg:
 class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
-    # env
-    decimation = 4
-    episode_length_s = 20.0
-    # simulation
-    sim: SimulationCfg = SimulationCfg(
-        dt=1 / 200,
-        render_interval=decimation,
-        physx=PhysxCfg(
-            
-             gpu_collision_stack_size=2**27,           # 134,217,728
-        ),
-    )
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -867,7 +909,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 2**19
+        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
         self.sim.physx.max_position_iteration_count = 4
         self.sim.physx.max_velocity_iteration_count = 1
         # update sensor update periods

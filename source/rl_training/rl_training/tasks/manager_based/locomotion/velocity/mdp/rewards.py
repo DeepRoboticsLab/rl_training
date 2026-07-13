@@ -88,6 +88,41 @@ def action_rate_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
     reward = torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
     return reward * get_gait_level_tensor(env)
 
+def action_smooth_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Penalize second-order action changes using an env-local action history."""
+    cache_name = "_action_smooth_prev_prev_action"
+    if not hasattr(env, cache_name):
+        setattr(env, cache_name, torch.zeros_like(env.action_manager.action))
+
+    prev_prev_action = getattr(env, cache_name)
+    diff = torch.square(env.action_manager.action + prev_prev_action - 2 * env.action_manager.prev_action)
+    # Ignore the first two steps of each episode where action history is incomplete.
+    diff = diff * (env.action_manager.prev_action != 0)
+    diff = diff * (prev_prev_action != 0)
+    reward = torch.sum(diff, dim=1)
+
+    setattr(env, cache_name, env.action_manager.prev_action.clone())
+    return reward * get_gait_level_tensor(env)
+
+def _get_action_term_slice(env: ManagerBasedRLEnv, action_term_name: str) -> slice:
+    """Resolve and cache a slice of concatenated action vector for a given action term name."""
+    cache_name = "_action_term_slices_cache"
+    if not hasattr(env, cache_name):
+        term_names = list(env.action_manager.active_terms)
+        term_dims = list(env.action_manager.action_term_dim)
+        start = 0
+        cache: dict[str, slice] = {}
+        for name, dim in zip(term_names, term_dims, strict=False):
+            cache[name] = slice(start, start + dim)
+            start += dim
+        setattr(env, cache_name, cache)
+
+    cache = getattr(env, cache_name)
+    if action_term_name not in cache:
+        raise ValueError(
+            f"Action term '{action_term_name}' not found. Available terms: {list(cache.keys())}"
+        )
+    return cache[action_term_name]
 
 def contact_forces(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize contact force violations (curriculum-scaled by gait_level)."""
@@ -188,6 +223,66 @@ def joint_pos_penalty(
         stand_still_scale * running_reward,
     )
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def joint_pos_penalty_except_turn_side_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    stand_still_scale: float,
+    velocity_threshold: float,
+    command_threshold: float,
+    ang_cmd_threshold: float = 0.1,
+    y_cmd_threshold: float = 0.1,
+    xy_norm_max: float = 0.1,
+    xz_norm_max: float = 0.1,
+    sensor_cfg: SceneEntityCfg | None = None,
+    terrain_height_threshold: float = 0.05,
+    high_terrain_penalty_scale: float = 0.5,
+) -> torch.Tensor:
+    """Joint position penalty disabled for two command patterns.
+
+    Disable when either:
+    1) |cmd_z| > ang_cmd_threshold and ||[cmd_x, cmd_y]|| < xy_norm_max
+    2) |cmd_y| > y_cmd_threshold and ||[cmd_x, cmd_z]|| < xz_norm_max
+
+    If ``sensor_cfg`` is provided, reduce the penalty on high terrain (e.g. stairs)
+    so hip-y/knee joints can deviate more from default posture.
+    """
+    reward = joint_pos_penalty(
+        env=env,
+        command_name=command_name,
+        asset_cfg=asset_cfg,
+        stand_still_scale=stand_still_scale,
+        velocity_threshold=velocity_threshold,
+        command_threshold=command_threshold,
+    )
+
+    cmd = env.command_manager.get_command(command_name)
+    gate_turn = (torch.abs(cmd[:, 2]) > ang_cmd_threshold) & (torch.linalg.norm(cmd[:, :2], dim=1) < xy_norm_max)
+    gate_side = (torch.abs(cmd[:, 1]) > y_cmd_threshold) & (
+        torch.linalg.norm(torch.stack((cmd[:, 0], cmd[:, 2]), dim=1), dim=1) < xz_norm_max
+    )
+    disable_gate = gate_turn | gate_side
+    reward = reward * (~disable_gate).float()
+
+    if sensor_cfg is not None:
+        height_sensor: RayCaster = env.scene[sensor_cfg.name]
+        ray_hits = height_sensor.data.ray_hits_w[..., 2]
+        valid_hits = torch.isfinite(ray_hits) & (torch.abs(ray_hits) <= 1e6)
+        valid_count = torch.sum(valid_hits, dim=1)
+        safe_hits = torch.where(valid_hits, ray_hits, torch.zeros_like(ray_hits))
+        terrain_height = torch.sum(safe_hits, dim=1) / torch.clamp(valid_count, min=1)
+        terrain_height = terrain_height - env.scene.env_origins[:, 2]
+        high_terrain = (terrain_height > terrain_height_threshold) & (valid_count > 0)
+        scale = torch.where(
+            high_terrain,
+            torch.full_like(reward, high_terrain_penalty_scale),
+            torch.ones_like(reward),
+        )
+        reward = reward * scale
+
     return reward
 
 
@@ -686,6 +781,30 @@ def feet_slide(
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 
+def feet_slide_ang_z_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_lin_threshold: float = 0.1,
+    cmd_ang_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Penalize feet sliding, only active when linear xy command is small and angular z command is large.
+
+    This is a variant of ``feet_slide`` that is gated by the velocity command: the penalty is only applied
+    when ``norm(cmd_xy) < cmd_lin_threshold`` AND ``abs(cmd_z) > cmd_ang_threshold``, i.e. during pure
+    yaw-rotation commands where foot sliding is most problematic.
+    """
+    reward = feet_slide(env, sensor_cfg=sensor_cfg, asset_cfg=asset_cfg)
+
+    # --- command gating: only active for pure yaw commands ---
+    command = env.command_manager.get_command(command_name)
+    lin_xy_norm = torch.norm(command[:, :2], dim=1)
+    ang_z_abs = torch.abs(command[:, 2])
+    gate = (lin_xy_norm < cmd_lin_threshold) & (ang_z_abs > cmd_ang_threshold)
+    reward = reward * gate.float()
+
+    return reward * get_gait_level_tensor(env)
 
 def _bernstein_torch(n: int, k: int, t: torch.Tensor) -> torch.Tensor:
     """Bernstein basis B_k^n(t) for tensor t in [0, 1]."""
@@ -1044,16 +1163,36 @@ def feet_air_time_ang_z_cmd(
     sensor_cfg: SceneEntityCfg,
     threshold: float,
     cmd_threshold: float = 0.1,
+    foot_height_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Air-time reward gated by yaw angular velocity command (z)."""
+    """Air-time reward gated by yaw command and minimum foot clearance."""
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
 
-    # Core logic unchanged
     first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
     last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
-    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+    in_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0
 
-    # Gate by angular velocity command only
+    foot_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - env.scene.env_origins[:, 2].unsqueeze(1)
+    state_name = "_feet_air_time_ang_z_height_state"
+    state = getattr(env, state_name, None)
+    if state is None or state["ground_height"].shape != foot_height.shape:
+        state = {
+            "ground_height": foot_height.clone(),
+            "max_air_height": foot_height.clone(),
+        }
+        setattr(env, state_name, state)
+
+    ground_height = state["ground_height"].to(device=foot_height.device)
+    max_air_height = state["max_air_height"].to(device=foot_height.device)
+    max_air_height = torch.where(in_contact, max_air_height, torch.maximum(max_air_height, foot_height))
+    cleared_ground = (max_air_height - ground_height) > foot_height_threshold
+    reward = torch.sum((last_air_time - threshold) * first_contact * cleared_ground, dim=1)
+
+    state["ground_height"] = torch.where(in_contact, foot_height, ground_height)
+    state["max_air_height"] = torch.where(in_contact, foot_height, max_air_height)
+
     cmd_ang_z = torch.abs(env.command_manager.get_command(command_name)[:, 2])
     reward *= cmd_ang_z > cmd_threshold
     return reward * get_gait_level_tensor(env)
@@ -1097,3 +1236,173 @@ def lin_vel_xy_l2_with_ang_z_command(
     # reward *= torch.sum(torch.square(env.command_manager.get_command(command_name)[:, 2:]), dim=1) > command_threshold
     # reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+def rotation_gait_status(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    group_a_body_names: list[str],
+    group_b_body_names: list[str],
+    target_height: float = 0.05,
+    lin_vel_threshold: float = 0.5,
+    ang_vel_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Reward alternating contact pattern during rotation.
+
+    When linear velocity command is small and angular velocity command is significant,
+    rewards the robot for having one diagonal group grounded while the other is lifted
+    by at least `target_height` above the grounded group.
+
+    Groups are diagonal leg pairs (e.g., FL+HR vs FR+HL).
+    """
+    # Cache body IDs on first call
+    cache_key = "_rotation_gait_status_cache"
+    if not hasattr(env, cache_key):
+        _sensor = env.scene.sensors[sensor_cfg.name]
+        _asset = env.scene[asset_cfg.name]
+        group_a_ids = [_sensor.find_bodies(n)[0][0] for n in group_a_body_names]
+        group_b_ids = [_sensor.find_bodies(n)[0][0] for n in group_b_body_names]
+        group_a_body_ids = [_asset.find_bodies(n)[0][0] for n in group_a_body_names]
+        group_b_body_ids = [_asset.find_bodies(n)[0][0] for n in group_b_body_names]
+        setattr(env, cache_key, {
+            "group_a_sensor_ids": group_a_ids,
+            "group_b_sensor_ids": group_b_ids,
+            "group_a_body_ids": group_a_body_ids,
+            "group_b_body_ids": group_b_body_ids,
+        })
+
+    cache = getattr(env, cache_key)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Gate: only active when rotating in place
+    command = env.command_manager.get_command(command_name)
+    lin_vel_cmd = torch.linalg.norm(command[:, :2], dim=1)
+    ang_vel_cmd = torch.abs(command[:, 2])
+    gate = (lin_vel_cmd < lin_vel_threshold) & (ang_vel_cmd > ang_vel_threshold)
+
+    # Contact state: True if in contact
+    contact_time = contact_sensor.data.current_contact_time
+    group_a_contact = contact_time[:, cache["group_a_sensor_ids"]] > 0  # [N, 2]
+    group_b_contact = contact_time[:, cache["group_b_sensor_ids"]] > 0  # [N, 2]
+
+    # Height of each group's feet (world z)
+    z_a = asset.data.body_pos_w[:, cache["group_a_body_ids"], 2]  # [N, 2]
+    z_b = asset.data.body_pos_w[:, cache["group_b_body_ids"], 2]  # [N, 2]
+    mean_z_a = z_a.mean(dim=1)  # [N]
+    mean_z_b = z_b.mean(dim=1)  # [N]
+
+    # Pattern 1: Group A grounded, Group B lifted
+    a_grounded = group_a_contact.all(dim=1).float()  # [N]
+    b_lifted_height = torch.clamp(mean_z_b - mean_z_a - target_height, min=0.0)
+    pattern_1 = a_grounded * torch.exp(-torch.square(b_lifted_height - target_height) / (0.02**2))
+    # Simpler: reward if height diff >= target_height
+    pattern_1 = a_grounded * (mean_z_b - mean_z_a > target_height).float()
+
+    # Pattern 2: Group B grounded, Group A lifted
+    b_grounded = group_b_contact.all(dim=1).float()  # [N]
+    pattern_2 = b_grounded * (mean_z_a - mean_z_b > target_height).float()
+
+    # Reward is max of either valid pattern
+    reward = torch.maximum(pattern_1, pattern_2)
+    reward *= gate.float()
+    return reward * get_gait_level_tensor(env)
+
+
+class RotationGaitSymmetry(ManagerTermBase):
+    """Reward symmetric contact duty cycle during rotation.
+
+    Tracks contact history over a 5-second window and rewards each diagonal leg group
+    for spending roughly equal time in contact vs air (50/50 duty cycle).
+
+    Only active when linear velocity command is small and angular velocity command
+    is significant (rotating in place).
+    """
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.command_name: str = cfg.params["command_name"]
+        self.lin_vel_threshold: float = cfg.params["lin_vel_threshold"]
+        self.ang_vel_threshold: float = cfg.params["ang_vel_threshold"]
+        self.target_duty: float = cfg.params["target_duty"]
+        self.std: float = cfg.params["std"]
+
+        # Resolve body IDs from contact sensor
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        group_a_body_names = cfg.params["group_a_body_names"]
+        group_b_body_names = cfg.params["group_b_body_names"]
+        self.group_a_ids = [self.contact_sensor.find_bodies(n)[0][0] for n in group_a_body_names]
+        self.group_b_ids = [self.contact_sensor.find_bodies(n)[0][0] for n in group_b_body_names]
+
+        # Circular buffer: [num_envs, num_feet, buffer_size]
+        # buffer_size = 5 seconds / step_dt
+        self.buffer_size = int(5.0 / env.step_dt)
+        num_feet = len(self.group_a_ids) + len(self.group_b_ids)
+        self.all_ids = self.group_a_ids + self.group_b_ids
+        self.contact_buffer = torch.zeros(
+            env.num_envs, num_feet, self.buffer_size, device=env.device
+        )
+        self.buffer_idx = 0
+        self.buffer_filled = False  # Track if buffer has filled at least once
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        """Clear buffer for reset envs."""
+        if env_ids is not None and len(env_ids) > 0:
+            self.contact_buffer[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        sensor_cfg: SceneEntityCfg,
+        group_a_body_names: list[str],
+        group_b_body_names: list[str],
+        target_duty: float,
+        std: float,
+        lin_vel_threshold: float,
+        ang_vel_threshold: float,
+    ) -> torch.Tensor:
+        # Update buffer with current contact state
+        contact_time = self.contact_sensor.data.current_contact_time
+        in_contact = (contact_time[:, self.all_ids] > 0).float()  # [N, num_feet]
+        self.contact_buffer[:, :, self.buffer_idx] = in_contact
+        self.buffer_idx = (self.buffer_idx + 1) % self.buffer_size
+        if not self.buffer_filled and self.buffer_idx == 0:
+            self.buffer_filled = True
+
+        # Gate: only active when rotating in place
+        command = env.command_manager.get_command(self.command_name)
+        lin_vel_cmd = torch.linalg.norm(command[:, :2], dim=1)
+        ang_vel_cmd = torch.abs(command[:, 2])
+        gate = (lin_vel_cmd < self.lin_vel_threshold) & (ang_vel_cmd > self.ang_vel_threshold)
+
+        # Compute duty cycle for each group over the buffer window
+        num_a = len(self.group_a_ids)
+        # Group A: first num_a entries, Group B: remaining
+        duty_a = self.contact_buffer[:, :num_a, :].mean(dim=(1, 2))  # [N]
+        duty_b = self.contact_buffer[:, num_a:, :].mean(dim=(1, 2))  # [N]
+
+        # Reward: exp kernel on deviation from target duty (0.5)
+        reward_a = torch.exp(-torch.square(duty_a - self.target_duty) / (self.std**2))
+        reward_b = torch.exp(-torch.square(duty_b - self.target_duty) / (self.std**2))
+        reward = reward_a * reward_b
+
+        # Only give reward once buffer has meaningful data
+        if not self.buffer_filled:
+            reward = reward * (self.buffer_idx / self.buffer_size)
+
+        reward *= gate.float()
+        return reward * get_gait_level_tensor(env)
+    
+def bad_orientation_penalty(
+    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Penalty based on bad_orientation_2 condition.
+
+    Returns 1.0 when orientation is considered bad (including back-up flip),
+    else returns 0.0.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    bad = (asset.data.projected_gravity_b[:, 2] > 0) | (asset.data.projected_gravity_b[:, :2].abs() > 0.7).any(-1)
+    return bad.float()
