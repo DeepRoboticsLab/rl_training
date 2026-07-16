@@ -1157,7 +1157,27 @@ def feet_air_time_x_neg_cmd(
 
     return reward
 
-def feet_air_time_ang_z_cmd(
+def feet_air_time_ang_z_cmd_lite3(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+    cmd_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Air-time reward gated by yaw angular velocity command (z)."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Core logic unchanged
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    reward = torch.sum((last_air_time - threshold) * first_contact, dim=1)
+
+    # Gate by angular velocity command only
+    cmd_ang_z = torch.abs(env.command_manager.get_command(command_name)[:, 2])
+    reward *= cmd_ang_z > cmd_threshold
+    return reward * get_gait_level_tensor(env)
+
+def feet_air_time_ang_z_cmd_M20(
     env: ManagerBasedRLEnv,
     command_name: str,
     sensor_cfg: SceneEntityCfg,

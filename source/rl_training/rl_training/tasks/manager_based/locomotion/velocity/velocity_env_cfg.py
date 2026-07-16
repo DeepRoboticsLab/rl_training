@@ -636,8 +636,8 @@ class RewardsCfg:
         },
     )
 
-    feet_air_time_ang_z = RewTerm(
-        func=mdp.feet_air_time_ang_z_cmd,
+    feet_air_time_ang_z_M20 = RewTerm(
+        func=mdp.feet_air_time_ang_z_cmd_M20,
         weight=0.0,
         params={
             "command_name": "base_velocity",
@@ -645,6 +645,17 @@ class RewardsCfg:
             "cmd_threshold": 0.1,
             "foot_height_threshold": 0.05,
             "asset_cfg": SceneEntityCfg("robot", body_names=""),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+        },
+    )
+
+    feet_air_time_ang_z_lite3 = RewTerm(
+        func=mdp.feet_air_time_ang_z_cmd_lite3,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+            "cmd_threshold": 0.1,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
         },
     )

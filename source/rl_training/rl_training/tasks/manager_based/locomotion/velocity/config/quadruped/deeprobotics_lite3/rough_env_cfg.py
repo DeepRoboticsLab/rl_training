@@ -129,9 +129,9 @@ class DeeproboticsLite3RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_air_time_x_neg.weight = 0.0 # 5.0
         self.rewards.feet_air_time_x_neg.params["threshold"] = 0.5
         self.rewards.feet_air_time_x_neg.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_air_time_ang_z.weight = 5.0 # 5.0
-        self.rewards.feet_air_time_ang_z.params["threshold"] = 0.5
-        self.rewards.feet_air_time_ang_z.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_air_time_ang_z_lite3.weight = 5.0 # 5.0
+        self.rewards.feet_air_time_ang_z_lite3.params["threshold"] = 0.5
+        self.rewards.feet_air_time_ang_z_lite3.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_air_time_variance.weight = -0.0 # -8.0
         self.rewards.feet_air_time_variance.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.weight = -0.05
