@@ -4,7 +4,7 @@ This actuator extends :class:`DelayedPDActuator` to add:
 - Per-episode randomization of PD gains (stiffness/damping)
 - Motor strength randomization (output torque scaling)
 - Position bias randomization (joint zero offset)
-- Battery voltage simulation affecting velocity-dependent torque limits
+- Torque-velocity saturation curve (DC motor model)
 """
 
 from __future__ import annotations
@@ -30,10 +30,9 @@ class RandomPDActuator(DelayedPDActuator):
       from ``motor_strength``.
     - **Position bias**: a constant offset added to the joint position error,
       sampled from ``pos_bias_range``.
-    - **Battery voltage**: affects the velocity-dependent torque saturation
-      curve. A random factor ``t_n_vel`` is sampled from ``t_n_vel_range``
-      and used to compute the saturation effort. A random battery voltage
-      further scales the velocity limit.
+    - **Torque-velocity curve**: a random factor ``t_n_vel`` is sampled from
+      ``t_n_vel_range`` and used to compute the saturation effort, which
+      affects the DC-motor-style torque-speed saturation curve.
     """
 
     cfg: "RandomPDActuatorCfg"
@@ -54,15 +53,10 @@ class RandomPDActuator(DelayedPDActuator):
         # Cached joint velocity for torque-velocity clipping
         self._joint_vel = torch.zeros_like(self.computed_effort)
 
-        # Battery / velocity-limit randomization
+        # Torque-velocity saturation curve parameters
         self.t_n_vel = torch.ones((self._num_envs, 1), device=self._device)
         self._saturation_effort = self.computed_effort.clone()
         self._zeros_effort = torch.zeros_like(self.computed_effort)
-
-        # Minimum velocity limit (80% of nominal) for battery simulation
-        self.min_velocity_limit = self.velocity_limit[[0]] * 0.8
-        self.battery_v = torch.zeros((self._num_envs, 1), device=self._device)
-        self.random_velocity_limit = self.velocity_limit.clone()
 
     def reset(self, env_ids: Sequence[int]):
         super().reset(env_ids)
@@ -109,12 +103,6 @@ class RandomPDActuator(DelayedPDActuator):
             1 - self.t_n_vel[env_ids]
         ).clip(0.01, 1)
 
-        # Randomize battery voltage → randomize effective velocity limit
-        self.battery_v[env_ids] = torch.rand((num_envs, 1), device=self._device)
-        self.random_velocity_limit[env_ids] = self.battery_v[env_ids] * (
-            self.velocity_limit[env_ids] - self.min_velocity_limit
-        ) + self.min_velocity_limit
-
     def compute(
         self,
         control_action: ArticulationActions,
@@ -158,11 +146,11 @@ class RandomPDActuator(DelayedPDActuator):
         saturation effort and velocity limit.
         """
         # Max torque (positive direction)
-        max_effort = self._saturation_effort * (1.0 - self._joint_vel / self.random_velocity_limit)
+        max_effort = self._saturation_effort * (1.0 - self._joint_vel / self.velocity_limit)
         max_effort = torch.clip(max_effort, min=self._zeros_effort, max=self.effort_limit)
 
         # Min torque (negative direction)
-        min_effort = self._saturation_effort * (-1.0 - self._joint_vel / self.random_velocity_limit)
+        min_effort = self._saturation_effort * (-1.0 - self._joint_vel / self.velocity_limit)
         min_effort = torch.clip(min_effort, min=-self.effort_limit, max=self._zeros_effort)
 
         return torch.clip(effort, min=min_effort, max=max_effort)

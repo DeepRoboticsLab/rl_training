@@ -126,7 +126,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
 # ---------------------------------------------------------------------------
 DR02_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/standard/DR02-STD.urdf",
+        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/pro/CR1-B2.urdf",
         fix_base=False,
         merge_fixed_joints=True,
         replace_cylinders_with_capsules=False,

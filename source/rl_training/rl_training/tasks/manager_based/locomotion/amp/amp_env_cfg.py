@@ -48,6 +48,8 @@ class obs_scales:
     foot_contact_forces = 0.002
     foot_velocity = 0.5
 
+AMP_NUM_FRAMES = 5
+AMP_HISTORY_STRIDE = 2
 
 ##
 # Generic SceneEntityCfg defaults (referenced by ObsTerms)
@@ -56,9 +58,9 @@ class obs_scales:
 
 _JOINT_CFG = SceneEntityCfg("robot")
 _AMP_JOINT_CFG = SceneEntityCfg("robot")
-_FEET_CFG = SceneEntityCfg("robot", body_names=".*foot.*|.*ankle.*")
+_FEET_CFG = SceneEntityCfg("robot", body_names=".*ankle.*")
 _HAND_CFG = SceneEntityCfg("robot", body_names=".*hand.*")
-_FEET_SENSOR_CFG = SceneEntityCfg("contact_sensor", body_names=".*foot.*|.*ankle.*")
+_FEET_SENSOR_CFG = SceneEntityCfg("contact_sensor", body_names=".*ankle.*")
 
 
 ##
@@ -95,7 +97,7 @@ class AmpSceneCfg(InteractiveSceneCfg):
 
     # contact sensor (for feet air time, contact forces)
     contact_sensor = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        prim_path="/World/envs/env_.*/Robot/.*",
         history_length=3,
         track_air_time=True,
         force_threshold=1.0,
@@ -148,7 +150,7 @@ class AmpActionsCfg:
         joint_names=[".*"],
         scale=MISSING,
         use_default_offset=True,
-        clip=10.0,
+        clip={".*": (-10.0, 10.0)},
         preserve_order=True,
     )
 
@@ -166,11 +168,10 @@ class AmpObservationsCfg:
       dof_pos(21), dof_vel(21), actions(21)]``
     - **critic** (121 dims): ``[body_vel(3), policy terms(73), torques(21),
       foot_force(6), foot_vel(6), hand_pos(6), foot_pos(6)]``
-    - **amp_obs** (61 dims): single-frame AMP discriminator observation
     - **obs_history** (730 dims): 10-frame × 73 policy obs history
-    - **amp_obs_history** (305 dims): 5-frame × 61 AMP obs history
+    - **amp_obs_history** (305 dims): 5-frame × 61 AMP obs history (stride=2)
     - **obs_future** (69 dims): future observation for estimation
-    - **vel_est** (3 dims): body velocity estimation target
+    - **vel** (3 dims): body velocity estimation target
     """
 
     @configclass
@@ -287,133 +288,39 @@ class AmpObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
 
-    @configclass
-    class AmpObsCfg(ObsGroup):
-        """AMP discriminator observation group (61 dims).
-
-        ``[proj_grav(3), lin_vel(3), ang_vel(3), joint_pos(20),
-        joint_vel(20), hand_pos(6), foot_pos(6)]``
-        """
-
-        projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0))
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100.0, 100.0))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, clip=(-100.0, 100.0))
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos,
-            params={"asset_cfg": _AMP_JOINT_CFG},
-            clip=(-100.0, 100.0),
-        )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": _AMP_JOINT_CFG},
-            clip=(-100.0, 100.0),
-        )
-        hand_pos = ObsTerm(
-            func=mdp.body_pos_in_base_frame,
-            params={"asset_cfg": _HAND_CFG},
-            clip=(-100.0, 100.0),
-        )
-        foot_pos = ObsTerm(
-            func=mdp.body_pos_in_base_frame,
-            params={"asset_cfg": _FEET_CFG},
-            clip=(-100.0, 100.0),
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-
-    @configclass
-    class ObsHistoryCfg(ObsGroup):
-        """Policy observation history group (730 dims = 10 × 73).
-
-        Uses ObservationManager's built-in ``history_length`` to maintain
-        a sliding window — no manual buffer management needed.
-        """
-
-        base_ang_vel = ObsTerm(
-            func=mdp.base_ang_vel,
-            noise=Unoise(n_min=-0.35, n_max=0.35),
-            scale=obs_scales.ang_vel,
-            clip=(-100.0, 100.0),
-        )
-        projected_gravity = ObsTerm(
-            func=mdp.projected_gravity,
-            noise=Unoise(n_min=-0.035, n_max=0.035),
-            clip=(-100.0, 100.0),
-        )
-        velocity_command = ObsTerm(
-            func=mdp.velocity_command,
-            params={"command_name": "base_velocity"},
-            scale=(obs_scales.lin_vel, obs_scales.lin_vel, obs_scales.ang_vel),
-            clip=(-100.0, 100.0),
-        )
-        cmd_flag = ObsTerm(
-            func=mdp.cmd_flag,
-            params={"command_name": "base_velocity"},
-            clip=(-100.0, 100.0),
-        )
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos_action_scaled,
-            params={"asset_cfg": _JOINT_CFG, "action_scale": MISSING},
-            noise=Unoise(n_min=-0.0025, n_max=0.0025),
-            clip=(-100.0, 100.0),
-        )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": _JOINT_CFG},
-            noise=Unoise(n_min=-1.0, n_max=1.0),
-            scale=obs_scales.dof_vel,
-            clip=(-100.0, 100.0),
-        )
-        actions = ObsTerm(
-            func=mdp.last_action,
-            clip=(-100.0, 100.0),
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = True
-            self.concatenate_terms = True
-            self.history_length = 10
+    # NOTE: obs_history is NOT an ObservationManager group — it is
+    # maintained manually by AmpLocomotionEnv using the already-computed
+    # obs_buf["policy"] tensor (frame-by-frame layout, 10×73 = 730 dims).
 
     @configclass
     class AmpObsHistoryCfg(ObsGroup):
         """AMP observation history group (305 dims = 5 × 61).
 
-        Uses ObservationManager's built-in ``history_length`` to maintain
-        a sliding window.  Original used stride=2 sampling (5 frames from
-        10-frame buffer); simplified to 5 consecutive frames for training
-        from scratch.
+        Uses a custom :class:`AmpObsHistoryTerm` (ManagerTermBase) that
+        maintains a 10-frame sliding window and subsamples with stride=2
+        to produce 5 frames — matching the expert motion dataset's
+        ``time_between_frames = dt × amp_history_stride``.
+
+        The term manages its own buffer internally, so no
+        ``history_length`` is set on the group (the ObservationManager's
+        built-in history mechanism is not used for this group).
         """
 
-        projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0))
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100.0, 100.0))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, clip=(-100.0, 100.0))
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos,
-            params={"asset_cfg": _AMP_JOINT_CFG},
-            clip=(-100.0, 100.0),
-        )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel,
-            params={"asset_cfg": _AMP_JOINT_CFG},
-            clip=(-100.0, 100.0),
-        )
-        hand_pos = ObsTerm(
-            func=mdp.body_pos_in_base_frame,
-            params={"asset_cfg": _HAND_CFG},
-            clip=(-100.0, 100.0),
-        )
-        foot_pos = ObsTerm(
-            func=mdp.body_pos_in_base_frame,
-            params={"asset_cfg": _FEET_CFG},
+        amp_obs_history = ObsTerm(
+            func=mdp.AmpObsHistoryTerm,
+            params={
+                "amp_joint_cfg": _AMP_JOINT_CFG,
+                "hand_cfg": _HAND_CFG,
+                "feet_cfg": _FEET_CFG,
+                "amp_history_stride": AMP_HISTORY_STRIDE,
+                "amp_num_frames": AMP_NUM_FRAMES,
+            },
             clip=(-100.0, 100.0),
         )
 
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
-            self.history_length = 5
 
     @configclass
     class ObsFutureCfg(ObsGroup):
@@ -442,10 +349,10 @@ class AmpObservationsCfg:
             self.concatenate_terms = True
 
     @configclass
-    class VelEstCfg(ObsGroup):
+    class BaseVelCfg(ObsGroup):
         """Velocity estimation target group (3 dims)."""
 
-        body_lin_vel = ObsTerm(func=mdp.base_lin_vel, scale=obs_scales.lin_vel)
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, scale=obs_scales.lin_vel)
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -454,11 +361,9 @@ class AmpObservationsCfg:
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    amp_obs: AmpObsCfg = AmpObsCfg()
-    obs_history: ObsHistoryCfg = ObsHistoryCfg()
     amp_obs_history: AmpObsHistoryCfg = AmpObsHistoryCfg()
     obs_future: ObsFutureCfg = ObsFutureCfg()
-    vel_est: VelEstCfg = VelEstCfg()
+    vel: BaseVelCfg = BaseVelCfg()
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -485,13 +390,13 @@ class AmpRewardsCfg:
     # ── Task rewards (Gaussian) ──────────────────────────────────
     lin_vel_tracking = RewTerm(
         func=mdp.lin_vel_tracking,
-        weight=0.8,
+        weight=1.0,
         params={"command_name": "base_velocity", "decay": 0.45},
     )
     ang_vel_tracking = RewTerm(
         func=mdp.ang_vel_tracking,
         weight=0.8,
-        params={"command_name": "base_velocity", "decay": 0.3},
+        params={"command_name": "base_velocity", "decay": 0.35},
     )
 
     # ── Posture rewards (Gaussian) ───────────────────────────────
@@ -501,39 +406,47 @@ class AmpRewardsCfg:
         params={"target_height": 0.875, "decay": 0.02},
     )
     orientation = RewTerm(
-        func=mdp.orientation,
+        func=mdp.orientation_gaussian,
         weight=0.5,
-        params={"decay": 0.01},
+        params={"decay": 0.0075},
     )
     ang_vel_xy = RewTerm(
-        func=mdp.ang_vel_xy,
+        func=mdp.ang_vel_xy_gaussian,
         weight=0.25,
-        params={"decay": 0.2},
+        params={"decay": 0.1},
     )
-
+    # orientation = RewTerm(
+    #     func=mdp.orientation,
+    #     weight=0.5,
+    #     params={"decay": 0.01},
+    # )
+    # ang_vel_xy = RewTerm(
+    #     func=mdp.ang_vel_xy,
+    #     weight=0.25,
+    #     params={"decay": 0.2},
+    # )
     # ── Gait rewards ─────────────────────────────────────────────
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
-        weight=-1.0,
+        weight=-0.75,
         params={
-            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*foot.*|.*ankle.*"]),
-            "threshold": 0.32,
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["*ankle.*"]),
         },
     )
     feet_contact = RewTerm(
         func=mdp.feet_contact,
         weight=0.5,
         params={
-            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*foot.*|.*ankle.*"]),
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["*ankle.*"]),
             "command_name": "base_velocity",
         },
     )
     feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=0.05,
+        weight=0.06,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"]),
-            "target_distance": 0.28,
+            "asset_cfg": SceneEntityCfg("robot", body_names=["*ankle.*"]),
+            "target_distance": 0.26,
             "decay": 0.03,
         },
     )
@@ -541,8 +454,23 @@ class AmpRewardsCfg:
         func=mdp.feet_slippage,
         weight=-0.05,
         params={
-            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*foot.*|.*ankle.*"]),
-            "asset_cfg": SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"]),
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
+        },
+    )
+    feet_impact_vel = RewTerm(
+        func=mdp.feet_impact_vel,
+        weight=-1.5,
+        params={
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
+        },
+    )
+    foot_orientation = RewTerm(
+        func=mdp.foot_orientation,
+        weight=-3.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
         },
     )
 
@@ -562,7 +490,7 @@ class AmpRewardsCfg:
     )
     dof_torque_limits = RewTerm(
         func=mdp.dof_torque_limits,
-        weight=-1.0,
+        weight=-0.5,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "soft_ratio": 0.95,
@@ -589,7 +517,7 @@ class AmpRewardsCfg:
     )
     action_l2 = RewTerm(
         func=mdp.action_l2,
-        weight=-0.01,
+        weight=-0.03,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
         },
@@ -600,12 +528,12 @@ class AmpRewardsCfg:
     # ── Constraint rewards ───────────────────────────────────────
     hipz_deviation = RewTerm(
         func=mdp.hipz_deviation,
-        weight=-2.5,
+        weight=-0.1,
         params={"command_name": "base_velocity"},
     )
     dof_err = RewTerm(
         func=mdp.dof_err,
-        weight=-1.0,
+        weight=-2.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
         },
@@ -628,7 +556,7 @@ class AmpRewardsCfg:
     )
 
     # ── AMP reward (placeholder) ─────────────────────────────────
-    amp_reward = RewTerm(func=mdp.amp_reward, weight=0.4)
+    amp_reward = RewTerm(func=mdp.amp_reward, weight=0.5)
 
 
 @configclass
@@ -641,7 +569,7 @@ class AmpEventCfg:
     Override body names in robot-specific config (e.g. flat_env_cfg.py).
     """
 
-    # Note: RewardComputeHelperManager handles its own initialization
+    # Note: AmpHelperManager handles its own initialization
     # (lazy init on first use) and reset (from AmpLocomotionEnv._reset_idx).
     # No startup/reset events needed for reward compute helper state.
 
@@ -674,7 +602,7 @@ class AmpEventCfg:
         func=mdp.randomize_rigid_body_mass,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="body"),
             "mass_distribution_params": (-2.0, 7.5),
             "operation": "add",
             "distribution": "uniform",
@@ -684,7 +612,7 @@ class AmpEventCfg:
         func=mdp.randomize_rigid_body_mass,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="^(?!.*(base_link|body)).*$"),
             "mass_distribution_params": (0.9, 1.15),
             "operation": "scale",
         },
@@ -703,7 +631,7 @@ class AmpEventCfg:
         func=mdp.randomize_rigid_body_com,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="body"),
             "com_range": {"x": (-0.075, 0.075), "y": (-0.075, 0.075), "z": (-0.075, 0.075)},
         },
     )
@@ -711,7 +639,7 @@ class AmpEventCfg:
         func=mdp.randomize_rigid_body_com,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="^(?!.*(base_link|body)).*$"),
             "com_range": {"x": (-0.015, 0.015), "y": (-0.015, 0.015), "z": (-0.015, 0.015)},
         },
     )
@@ -736,39 +664,56 @@ class AmpEventCfg:
             "randomize": True,
         },
     )
+
+    # ── Reset: AMP reference state initialization ──────────────
+    # Must come AFTER reset_root_state and reset_dof_pos so it overrides
+    # the randomized initial state for the sampled subset.
+    # amp_dof_cfg.joint_names should be set in robot-specific config
+    # (e.g. flat_env_cfg.py) to specify AMP-relevant joints.
+    # reset_amp_reference = EventTerm(
+    #     func=mdp.reset_amp_reference,
+    #     mode="reset",
+    #     params={
+    #         "sampling_probability": 0.1,
+    #         "amp_dof_cfg": SceneEntityCfg("robot"),  # override joint_names in robot cfg
+    #         "pose_range": (-1.5, 1.5),
+    #     },
+    # )
+
     # Note: reward compute helper state reset is handled by
-    # RewardComputeHelperManager.reset() called from AmpLocomotionEnv._reset_idx()
+    # AmpHelperManager.reset() called from AmpLocomotionEnv._reset_idx()
 
     # ── Interval: push robots ────────────────────────────────────
-    push_robots = EventTerm(
-        func=mdp.push_robots,
-        mode="interval",
-        interval_range_s=(12.0, 12.0),
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base"),
-            "force_range": (200.0, 100.0, 50.0),
-            "torque_range": (25.0, 50.0, 25.0),
-        },
-    )
+    # push_robots = EventTerm(
+    #     func=mdp.push_robots,
+    #     mode="interval",
+    #     interval_range_s=(0.1, 0.3),
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="base"),
+    #         "force_range": (200.0, 100.0, 50.0),
+    #         "torque_range": (25.0, 50.0, 25.0),
+    #     },
+    # )
 
 
 @configclass
 class AmpTerminationsCfg:
     """Termination terms for the AMP MDP."""
 
+    # IsaacLab default terminations (no custom overrides)
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     illegal_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*torso.*|.*body.*|.*base.*"]),
+            "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*base_link.*"]),
             "threshold": 50.0,
         },
     )
 
     bad_orientation = DoneTerm(
-        func=mdp.bad_orientation,
-        params={"limit_angle": 1.0},
+        func=mdp.bad_orientation_pitch_roll,
+        params={"pitch_limit": 1.1, "roll_limit": 1.0},
     )
 
     base_height_too_low = DoneTerm(
@@ -806,11 +751,11 @@ class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
             restitution=1.0,
         ),
         physx=PhysxCfg(
-            enable_ccd=True,
-            max_position_iteration_count=4,
+            enable_ccd=False,
+            max_position_iteration_count=255,
             max_velocity_iteration_count=1,
-            gpu_max_rigid_contact_count=2**25,
-            gpu_max_rigid_patch_count=2**25,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
             gpu_collision_stack_size=2**27,
         ),
         render=RenderCfg(dlss_mode="Off"),

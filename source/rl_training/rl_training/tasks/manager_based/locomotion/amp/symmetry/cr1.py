@@ -111,9 +111,9 @@ def compute_symmetric_states(
                 env.unwrapped, obs["obs_future"]
             )
 
-        # vel_est / vel group (3 dims: body linear velocity)
+        # base_vel / vel group (3 dims: body linear velocity)
         # Under left-right symmetry, the y-component (lateral) is negated.
-        for vel_key in ("vel_est", "vel"):
+        for vel_key in ("base_vel", "vel"):
             if vel_key in obs:
                 obs_aug[vel_key][:batch_size] = obs[vel_key][:]
                 mirrored_vel = obs[vel_key].clone()

@@ -1,1 +1,1 @@
-from .reward_compute_helper_manager import RewardComputeHelperCfg, RewardComputeHelperManager
+from .amp_helper_manager import AmpHelperCfg, AmpHelperManager

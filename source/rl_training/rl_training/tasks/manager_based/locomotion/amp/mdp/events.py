@@ -211,3 +211,118 @@ def reset_root_state_randomized(
     asset.write_root_pose_to_sim(default_root_state[:, :7], env_ids=env_ids)
     asset.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids=env_ids)
 
+
+# ────────────────────────────────────────────────────────────────────
+# Reset: AMP reference state initialization
+# ────────────────────────────────────────────────────────────────────
+
+
+def reset_amp_reference(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    sampling_probability: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    amp_dof_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    pose_range: tuple[float, float] = (-1.5, 1.5),
+):
+    """Reset robot state from AMP reference motion data (subset of envs).
+
+    Mirrors ``AMPTrainEnv._reset_dofs_amp`` + ``_reset_root_states_amp``.
+
+    This event must be placed **after** ``reset_root_state_randomized`` and
+    ``reset_dof_pos_randomized`` in the event config so that it overrides
+    the default/randomized initial state for the sampled subset.
+
+    The function samples a fraction of ``env_ids`` (controlled by
+    ``sampling_probability``) and sets their DOF positions/velocities and
+    root state (position, orientation, linear/angular velocity) from the
+    AMP reference dataset.
+
+    Args:
+        sampling_probability: Probability that a given env uses AMP reference
+            data instead of the default randomized reset.
+        asset_cfg: Robot articulation to reset.
+        amp_dof_cfg: SceneEntityCfg whose ``joint_names`` specify the AMP-relevant
+            joints (e.g. legs, excluding waist). If empty, all joints are used.
+        pose_range: XY position randomization range applied on top of the
+            AMP reference root position.
+    """
+    # Access the AMP dataset (set by runner via env.amp_dataset)
+    amp_dataset = getattr(env, "amp_dataset", None)
+    if amp_dataset is None:
+        return
+
+    # Resolve env_ids (EventManager may pass slice(None) when env_ids is None)
+    if isinstance(env_ids, slice):
+        env_ids = torch.arange(env.scene.num_envs, device=env.device)
+    else:
+        env_ids = env_ids.to(env.device)
+
+    if len(env_ids) == 0:
+        return
+
+    # Sample which envs use AMP reference
+    use_amp = torch.rand(len(env_ids), device=env.device) < sampling_probability
+    amp_env_ids = env_ids[use_amp]
+    if len(amp_env_ids) == 0:
+        return
+
+    # Get reference frames from the AMP dataset
+    frames = amp_dataset.get_full_frame_batch(len(amp_env_ids))
+
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # ── DOF reset ─────────────────────────────────────────────────
+    # Resolve AMP DOF indices (cached on the env to avoid repeated lookups)
+    if not hasattr(env, "_amp_dof_indices_resolved"):
+        if amp_dof_cfg.joint_names:
+            indices, _ = asset.find_joints(amp_dof_cfg.joint_names, preserve_order=True)
+        else:
+            indices = list(range(asset.num_joints))
+        env._amp_dof_indices_resolved = indices
+    amp_indices = env._amp_dof_indices_resolved
+
+    # Use randomized default dof pos if available (matches AMPTrainEnv
+    # _reset_dofs_amp with randomize_default_dof_pos=True)
+    ahm = getattr(env, "amp_helper_manager", None)
+    default_random = getattr(ahm, "default_dof_pos_random", None) if ahm is not None else None
+    if default_random is not None:
+        joint_pos = default_random[amp_env_ids].clone()
+    else:
+        joint_pos = asset.data.default_joint_pos[amp_env_ids].clone()
+    joint_vel = torch.zeros_like(joint_pos)
+    joint_pos[:, amp_indices] = amp_dataset.get_joint_pose_batch(frames)
+    joint_vel[:, amp_indices] = amp_dataset.get_joint_vel_batch(frames)
+    asset.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=amp_env_ids)
+
+    # ── Root state reset ─────────────────────────────────────────
+    root_pos = amp_dataset.get_root_pos_batch(frames)
+    root_pos[:, 2] = torch.clip(root_pos[:, 2], 0.9, 1.0)
+    root_pos[:, :2] = 0
+    root_pos = root_pos + env.scene.env_origins[amp_env_ids]
+
+    # xy position randomization (mirrors AMPTrainEnv._reset_root_states_amp)
+    n = len(amp_env_ids)
+    root_pos[:, 0] += torch.rand(n, device=env.device) * (pose_range[1] - pose_range[0]) + pose_range[0]
+    root_pos[:, 1] += torch.rand(n, device=env.device) * (pose_range[1] - pose_range[0]) + pose_range[0]
+
+    root_orn = amp_dataset.get_root_rot_batch(frames)
+    # AMP dataset stores quaternions in (x, y, z, w) format,
+    # but IsaacLab expects (w, x, y, z) for write_root_pose_to_sim.
+    root_orn = math_utils.convert_quat(root_orn, to="wxyz")
+    root_lin_vel = math_utils.quat_apply(
+        root_orn, amp_dataset.get_linear_vel_batch(frames)
+    )
+    root_ang_vel = math_utils.quat_apply(
+        root_orn, amp_dataset.get_angular_vel_batch(frames)
+    )
+
+    default_root_state = asset.data.default_root_state[amp_env_ids].clone()
+    default_root_state[:, :3] = root_pos
+    default_root_state[:, 3:7] = root_orn
+    default_root_state[:, 7:10] = root_lin_vel
+    default_root_state[:, 10:13] = root_ang_vel
+
+    asset.write_root_pose_to_sim(default_root_state[:, :7], env_ids=amp_env_ids)
+    asset.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids=amp_env_ids)
+

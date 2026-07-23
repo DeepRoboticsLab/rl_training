@@ -10,159 +10,126 @@ import time
 from dataclasses import MISSING, field
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl.rl_cfg import RslRlBaseRunnerCfg
+from isaaclab_rl.rsl_rl.rl_cfg import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlMLPModelCfg,
+    RslRlPpoAlgorithmCfg,
+)
+
+from rl_training.tasks.manager_based.locomotion.amp.amp_env_cfg import (
+    AMP_NUM_FRAMES,
+    AMP_HISTORY_STRIDE,
+)
 
 
-# Motion files for CR1-B2-STD (globbed from amp/datasets/)
+# Motion files for CR1-B2-STD (globbed from amp/datasets/amp_dataset_ik/)
 _AMP_DATASETS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "..", "datasets"
+    os.path.dirname(__file__), "..", "..", "..", "..", "datasets", "amp_dataset_ik"
 )
 _MOTION_FILES = glob.glob(os.path.join(_AMP_DATASETS_DIR, "*"))
 
 
 @configclass
-class AmpRunnerCfg:
-    """Sub-configuration for the ``runner`` section consumed by AMPOnPolicyRunner."""
+class AmpDiscriminatorCfg:
+    """AMP discriminator network and training configuration."""
 
-    class_name: str = "rl_training.amp_rsl_rl.runners:AMPOnPolicyRunner"
-    """Runner class name (resolve_callable format)."""
+    hidden_dims: list[int] = [1024, 512]
+    """Hidden layer dimensions of the discriminator MLP."""
 
-    policy_class_name: str = "AsymActorCritic"
-    """Policy class name."""
+    max_grad_norm: float = 5.0
+    """Maximum gradient norm for discriminator optimizer."""
 
-    algorithm_class_name: str = "rl_training.amp_rsl_rl.algorithms:PPO_AMP"
-    """Algorithm class name (resolve_callable format)."""
+    learning_rate: float = 1e-4
+    """Learning rate for the discriminator optimizer."""
 
-    num_steps_per_env: int = MISSING
-    """Steps per environment per update."""
+    loss_coeff: float = 1.0
+    """Coefficient for the discriminator (policy vs expert) loss."""
 
-    save_interval: int = MISSING
-    """Iterations between saves."""
-
-    save_items: list = MISSING
-    """List of files to copy to log directory for reproducibility."""
+    grad_penalty_loss_coeff: float = 10.0
+    """Coefficient for the gradient penalty loss."""
 
 
 @configclass
-class AmpPolicyCfg:
-    """Policy configuration for AMP AsymActorCritic network."""
+class CENetCfg:
+    """CE-Net (Context Encoding Network) configuration."""
 
-    class_name: str = "AsymActorCritic"
-    """Policy class name."""
-
-    init_noise_std: float = 1.0
-    """Initial noise standard deviation. Not used by AsymActorCritic but kept for cfg compatibility."""
-
-    actor_hidden_dims: list[int] = MISSING
-    """Actor network hidden layer dimensions."""
-
-    critic_hidden_dims: list[int] = MISSING
-    """Critic network hidden layer dimensions."""
-
-    encoder_hidden_dims: list[int] = MISSING
-    """Encoder network hidden layer dimensions (for CE-Net)."""
-
-    activation: str = MISSING
-    """Activation function name."""
-
-    amp_discriminator_hidden_dims: list[int] = MISSING
-    """AMP discriminator hidden layer dimensions."""
-
-    latent_dims: int = MISSING
-    """Latent dimension for estimation terms."""
+    latent_dims: int = 19
+    """Dimension of the latent encoding vector."""
 
     est_terms: dict = MISSING
-    """Estimation terms configuration dict."""
+    """Estimation terms dict. Keys are term names, values are dicts with
+    'type' ('explicit' or 'implicit'), 'dim', and for explicit terms 'loss_coeff'."""
+
+    encoder_hidden_dims: list[int] = [512, 256, 64]
+    """Hidden dims of the CE-Net encoder."""
+
+    decoder_hidden_dims: list[int] = [64, 128]
+    """Hidden dims of the CE-Net decoder (for implicit / VAE path)."""
+
+    activation: str = "elu"
+    """Activation function for CE-Net layers."""
+
+    obs_mse_coeff: float = 4.0
+    """Coefficient for the observation prediction MSE loss (VAE decoder)."""
+
+    vae_kl_coeff: float = 1.0
+    """Coefficient for the VAE KL divergence loss."""
 
 
 @configclass
-class AmpPpoAlgorithmCfg:
-    """Algorithm configuration for PPO_AMP."""
+class AmpDatasetCfg:
+    """AMP motion dataset and replay buffer configuration."""
 
-    class_name: str = "rl_training.amp_rsl_rl.algorithms:PPO_AMP"
-    """Algorithm class name (resolve_callable format)."""
+    num_frames: int = 2
+    """Number of frames per AMP observation sequence."""
 
-    # PPO standard parameters
-    value_loss_coef: float = MISSING
-    use_clipped_value_loss: bool = MISSING
-    clip_param: float = MISSING
-    entropy_coef: float = MISSING
-    num_learning_epochs: int = MISSING
-    num_mini_batches: int = MISSING
-    learning_rate: float = MISSING
-    schedule: str = MISSING
-    gamma: float = MISSING
-    lam: float = MISSING
-    desired_kl: float = MISSING
-    max_grad_norm: float = MISSING
-    normalize_advantage_per_mini_batch: bool = False
+    history_stride: int = 2
+    """Stride (in env steps) between AMP history frames."""
 
-    # AMP-specific parameters
-    discriminate_max_grad_norm: float = MISSING
-    discriminate_learning_rate: float = MISSING
-    discriminate_loss_coeff: float = MISSING
-    grad_penalty_loss_coeff: float = MISSING
-    obs_mse_coeff: float = MISSING
-    vae_kl_coeff: float = MISSING
-    amp_num_frames: int = MISSING
-    amp_history_stride: int = MISSING
-    amp_num_preload_transitions: int = MISSING
-    amp_replay_buffer_size: int = MISSING
-    amp_motion_files: list = MISSING
-    symmetry_cfg: dict = None
-    """Symmetry configuration dict with keys: use_symmetry_data_augmentation, use_symmetry_mirror_loss, mirror_loss_coeff."""
+    num_preload_transitions: int = 100000
+    """Number of transitions to preload from motion files."""
+
+    replay_buffer_size: int = 1000000
+    """Maximum size of the AMP replay buffer."""
+
+    motion_files: list = MISSING
+    """List of motion file paths for the expert dataset."""
 
 
 @configclass
-class AmpOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
-    """Configuration for the AMP On-Policy Runner.
+class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """Algorithm configuration for PPO_AMP.
 
-    Inherits common runner fields (seed, device, num_steps_per_env, etc.)
-    from :class:`RslRlBaseRunnerCfg` and adds a top-level ``class_name``
-    plus AMP-specific ``runner``, ``policy``, and ``algorithm`` sub-configurations.
-
-    The ``class_name`` field enables ``resolve_callable`` in the training
-    script to dynamically resolve ``AMPOnPolicyRunner`` instead of the
-    default ``OnPolicyRunner``.  This also signals to the training script
-    to skip ``handle_deprecated_rsl_rl_cfg`` (which would otherwise clear
-    the AMP-specific ``policy`` sub-configuration).
-
-    When ``to_dict()`` is called, the resulting dict has the structure::
-
-        {
-            "seed": ..., "device": ..., "num_steps_per_env": ...,
-            "class_name": "rl_training.amp_rsl_rl.runners:AMPOnPolicyRunner",
-            "runner": {"class_name": "rl_training.amp_rsl_rl.runners:AMPOnPolicyRunner", ...},
-            "policy": {"class_name": "AsymActorCritic", ...},
-            "algorithm": {"class_name": "rl_training.amp_rsl_rl.algorithms:PPO_AMP", ...},
-            ...
-        }
-
-    This matches the dict format expected by ``AMPOnPolicyRunner.__init__``
-    and ``PPO_AMP.construct_algorithm``.
+    Inherits standard PPO fields from RslRlPpoAlgorithmCfg and adds
+    AMP-specific sub-configs (discriminator, CE-Net, motion dataset).
     """
 
-    class_name: str = "rl_training.amp_rsl_rl.runners:AMPOnPolicyRunner"
-    """Runner class name (resolve_callable format).  This field enables the
-    training script to dynamically resolve ``AMPOnPolicyRunner`` and signals
-    that the deprecated cfg handler should be skipped."""
+    class_name: str = "rl_training.rsl_rl.algorithms:PPO_AMP"
+    """Algorithm class name (resolve_callable format)."""
 
-    runner: AmpRunnerCfg = MISSING
-    """Runner sub-configuration."""
+    amp_discriminator_cfg: AmpDiscriminatorCfg = MISSING
+    """AMP discriminator network and training sub-configuration."""
 
-    policy: AmpPolicyCfg = MISSING
-    """Policy sub-configuration."""
+    ce_net_cfg: CENetCfg = MISSING
+    """CE-Net network and loss sub-configuration."""
 
-    algorithm: AmpPpoAlgorithmCfg = MISSING
-    """Algorithm sub-configuration."""
+    amp_dataset_cfg: AmpDatasetCfg = MISSING
+    """AMP motion dataset and replay buffer sub-configuration."""
+
+    # Override symmetry_cfg to accept plain dict (AMP uses custom symmetry)
+    symmetry_cfg: dict = None
+    """Symmetry configuration dict with keys: use_data_augmentation, use_mirror_loss,
+    mirror_loss_coeff, data_augmentation_func."""
 
 
 @configclass
-class CR1AmpRunnerCfg(AmpOnPolicyRunnerCfg):
+class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     """CR1-B2-STD AMP training configuration.
 
-    Migrated from ``cr1_amp_cfg.py``. All values match the original
-    configuration used for CR1 humanoid AMP training.
+    Uses the base OnPolicyRunner (no custom runner needed) with PPO_AMP
+    as the algorithm. Actor and critic are separate MLPModel instances,
+    while CE-Net and AMP discriminator are standalone nn.Module classes
+    created inside PPO_AMP.construct_algorithm.
     """
 
     # ---- Top-level runner fields (from RslRlBaseRunnerCfg) ----
@@ -173,51 +140,44 @@ class CR1AmpRunnerCfg(AmpOnPolicyRunnerCfg):
     empirical_normalization: bool = False
     obs_groups: dict = field(
         default_factory=lambda: {
-            "actor": ["policy"],
+            "actor": ["policy", "latent"],
             "critic": ["critic"],
         }
     )
     save_interval: int = 500
     experiment_name: str = "cr1_amp"
     run_name: str = ""
-    logger: str = "tensorboard"
     resume: bool = False
     load_run: str = ".*"
     load_checkpoint: str = "model_.*.pt"
     clip_actions: float = 10.0
 
-    # ---- Runner sub-config ----
-    runner: AmpRunnerCfg = AmpRunnerCfg(
-        class_name="rl_training.amp_rsl_rl.runners:AMPOnPolicyRunner",
-        policy_class_name="AsymActorCritic",
-        algorithm_class_name="rl_training.amp_rsl_rl.algorithms:PPO_AMP",
-        num_steps_per_env=24,
-        save_interval=500,
-        save_items=[
-            os.path.join(os.path.dirname(__file__), "rsl_rl_amp_cfg.py"),
-            os.path.join(os.path.dirname(__file__), "..", "flat_env_cfg.py"),
-        ],
-    )
+    # ---- Use base OnPolicyRunner (no custom runner) ----
+    class_name: str = "OnPolicyRunner"
 
-    # ---- Policy config ----
-    policy: AmpPolicyCfg = AmpPolicyCfg(
-        class_name="AsymActorCritic",
-        init_noise_std=1.0,
-        actor_hidden_dims=[1024, 256, 128],
-        critic_hidden_dims=[1024, 512, 256, 128],
-        encoder_hidden_dims=[512, 256, 128],
+    # ---- Actor model config (MLPModel with Gaussian distribution) ----
+    actor: RslRlMLPModelCfg = RslRlMLPModelCfg(
+        class_name="MLPModel",
+        hidden_dims=[1024, 256, 128],
         activation="elu",
-        amp_discriminator_hidden_dims=[512, 256, 128],
-        latent_dims=19,
-        est_terms={
-            "vel_est": {"type": "explicit", "dim": 3, "shape": [3], "loss_coeff": 20.0},
-            "implicit": {"type": "implicit", "dim": 16},
-        },
+        obs_normalization=False,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=1.0,
+            std_type="scalar",
+        ),
     )
 
-    # ---- Algorithm config ----
+    # ---- Critic model config (MLPModel, deterministic) ----
+    critic: RslRlMLPModelCfg = RslRlMLPModelCfg(
+        class_name="MLPModel",
+        hidden_dims=[1024, 512, 256, 128],
+        activation="elu",
+        obs_normalization=False,
+    )
+
+    # ---- Algorithm config (PPO_AMP with AMP-specific params) ----
     algorithm: AmpPpoAlgorithmCfg = AmpPpoAlgorithmCfg(
-        class_name="rl_training.amp_rsl_rl.algorithms:PPO_AMP",
+        class_name="rl_training.rsl_rl.algorithms:PPO_AMP",
         # PPO params
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
@@ -232,25 +192,40 @@ class CR1AmpRunnerCfg(AmpOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
         normalize_advantage_per_mini_batch=False,
-        # AMP-specific params
-        discriminate_max_grad_norm=5.0,
-        discriminate_learning_rate=1e-4,
-        discriminate_loss_coeff=1,
-        grad_penalty_loss_coeff=10,
-        obs_mse_coeff=2,
-        vae_kl_coeff=0.2,
-        amp_num_frames=5,
-        amp_history_stride=2,
-        amp_num_preload_transitions=2000000,
-        amp_replay_buffer_size=200000,
-        amp_motion_files=_MOTION_FILES,
+        # AMP discriminator
+        amp_discriminator_cfg=AmpDiscriminatorCfg(
+            hidden_dims=[512, 256, 128],
+            max_grad_norm=5.0,
+            learning_rate=1e-4,
+            loss_coeff=1,
+            grad_penalty_loss_coeff=10,
+        ),
+        # CE-Net
+        ce_net_cfg=CENetCfg(
+            latent_dims=19,
+            est_terms={
+                "vel": {"type": "explicit", "dim": 3, "loss_coeff": 20.0},
+                "implicit": {"type": "implicit", "dim": 16},
+            },
+            encoder_hidden_dims=[512, 256, 128],
+            decoder_hidden_dims=[64, 128],
+            activation="elu",
+            obs_mse_coeff=2,
+            vae_kl_coeff=0.2,
+        ),
+        # AMP dataset
+        amp_dataset_cfg=AmpDatasetCfg(
+            num_frames=AMP_NUM_FRAMES,
+            history_stride=AMP_HISTORY_STRIDE,
+            num_preload_transitions=2000000,
+            replay_buffer_size=200000,
+            motion_files=_MOTION_FILES,
+        ),
+        # Symmetry
         symmetry_cfg={
-            "use_symmetry_data_augmentation": True,
-            "use_symmetry_mirror_loss": False,
+            "use_data_augmentation": False,
+            "use_mirror_loss": False,
             "mirror_loss_coeff": 0.1,
-            # Path to the symmetry function (module:function format).
-            # The AMP runner must be adapted to import and call this function
-            # instead of accessing env.symmetrize_* methods directly.
             "data_augmentation_func": (
                 "rl_training.tasks.manager_based.locomotion.amp.symmetry.cr1:compute_symmetric_states"
             ),
