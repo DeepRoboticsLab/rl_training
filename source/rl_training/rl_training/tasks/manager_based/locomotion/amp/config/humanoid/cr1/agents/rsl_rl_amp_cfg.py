@@ -126,7 +126,7 @@ class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     """CR1-B2-STD AMP training configuration.
 
-    Uses the base OnPolicyRunner (no custom runner needed) with PPO_AMP
+    Uses AMPOnPolicyRunner (extends OnPolicyRunner) with PPO_AMP
     as the algorithm. Actor and critic are separate MLPModel instances,
     while CE-Net and AMP discriminator are standalone nn.Module classes
     created inside PPO_AMP.construct_algorithm.
@@ -152,8 +152,8 @@ class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     load_checkpoint: str = "model_.*.pt"
     clip_actions: float = 10.0
 
-    # ---- Use base OnPolicyRunner (no custom runner) ----
-    class_name: str = "OnPolicyRunner"
+    # ---- Use AMPOnPolicyRunner (extends OnPolicyRunner with custom export) ----
+    class_name: str = "rl_training.rsl_rl.runners:AMPOnPolicyRunner"
 
     # ---- Actor model config (MLPModel with Gaussian distribution) ----
     actor: RslRlMLPModelCfg = RslRlMLPModelCfg(

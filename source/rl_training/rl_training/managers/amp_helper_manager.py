@@ -271,39 +271,15 @@ class AmpHelperManager(ManagerBase):
         """Update the obs_history buffer using obs_buf["policy"].
 
         Mirrors the original AMPTrainEnv._compute_observations():
-
-        .. code-block:: python
-
-            obs_buf = observation_vector_assemble()  # with scale
-            obs_buf += noise                        # add noise
-            obs_history_buf = cat(obs_history_buf[:, 1:, :], obs_buf.unsqueeze(1))
-            obs_history = flatten(obs_history_buf)  # frame-by-frame
-
-        For reset envs, the buffer was already zeroed in ``reset()``, so the
-        sliding window produces ``[0, 0, ..., 0, current_obs]`` — matching
-        the original AMPTrainEnv where ``_reset_idx`` sets
-        ``obs_history_buf[env_ids] = 0`` and then ``_compute_observations``
-        appends one frame.
+        obs_history_buf = cat(obs_history_buf[:, 1:, :], obs_buf.unsqueeze(1))
 
         The policy observation already has noise, scale, and clip applied
         by the ObservationManager — no recomputation needed.
-
-        Args:
-            reset_env_ids: Env indices that were just reset (unused now —
-                reset zeroing happens in ``reset()``). Kept for API
-                compatibility with the calling code.
         """
-        # self._ensure_initialized()
         policy_obs = self._env.obs_buf["policy"]  # (num_envs, 73)
-
-        # Sliding window: shift left, append new frame
-        # For reset envs, the buffer was zeroed in reset(), so this produces
-        # [0, 0, ..., 0, current_obs] — matching the original AMPTrainEnv.
         self._obs_history_buf = torch.cat(
             (self._obs_history_buf[:, 1:, :], policy_obs.unsqueeze(1)), dim=1
         )
-
-        # Store flattened in obs_buf: [frame0(73), frame1(73), ..., frame9(73)]
         self._env.obs_buf["obs_history"] = self._obs_history_buf.reshape(self.num_envs, -1)
 
     def post_step_update(self):
@@ -335,12 +311,6 @@ class AmpHelperManager(ManagerBase):
             last_actions[env_ids] = 0
             last_last_actions[env_ids] = 0
 
-        Also zeroes obs_history_buf for the reset envs (mirrors
-        AMPTrainEnv._reset_idx lines 1243-1244):
-            obs_history_buf[env_ids] = 0
-            obs_history[env_ids] = 0
-        The subsequent ``update_obs_history()`` call then produces
-        ``[0, 0, ..., 0, current_obs]`` via the sliding window.
         """
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)

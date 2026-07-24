@@ -14,6 +14,7 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
@@ -665,35 +666,35 @@ class AmpEventCfg:
         },
     )
 
-    # ── Reset: AMP reference state initialization ──────────────
-    # Must come AFTER reset_root_state and reset_dof_pos so it overrides
-    # the randomized initial state for the sampled subset.
-    # amp_dof_cfg.joint_names should be set in robot-specific config
-    # (e.g. flat_env_cfg.py) to specify AMP-relevant joints.
-    # reset_amp_reference = EventTerm(
-    #     func=mdp.reset_amp_reference,
-    #     mode="reset",
-    #     params={
-    #         "sampling_probability": 0.1,
-    #         "amp_dof_cfg": SceneEntityCfg("robot"),  # override joint_names in robot cfg
-    #         "pose_range": (-1.5, 1.5),
-    #     },
-    # )
-
-    # Note: reward compute helper state reset is handled by
-    # AmpHelperManager.reset() called from AmpLocomotionEnv._reset_idx()
-
     # ── Interval: push robots ────────────────────────────────────
-    # push_robots = EventTerm(
-    #     func=mdp.push_robots,
-    #     mode="interval",
-    #     interval_range_s=(0.1, 0.3),
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="base"),
-    #         "force_range": (200.0, 100.0, 50.0),
-    #         "torque_range": (25.0, 50.0, 25.0),
-    #     },
-    # )
+    # Enabled/disabled dynamically by push_curriculum based on mean reward.
+    # Initial force/torque set to zero (disabled); curriculum enables when reward > threshold.
+    push_robots = EventTerm(
+        func=mdp.push_robots,
+        mode="interval",
+        interval_range_s=(0.1, 0.3),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
+            "force_range": (0.0, 0.0, 0.0),
+            "torque_range": (0.0, 0.0, 0.0),
+        },
+    )
+
+
+@configclass
+class AmpCurriculumCfg:
+    """Curriculum terms for the AMP MDP."""
+
+    # Enable push_robots when mean episode reward exceeds threshold.
+    push_curriculum = CurrTerm(
+        func=mdp.push_curriculum,
+        params={
+            "reward_term_name": "lin_vel_tracking",
+            "reward_ratio": 0.8,
+            "force_range": (200.0, 100.0, 50.0),
+            "torque_range": (25.0, 50.0, 25.0),
+        },
+    )
 
 
 @configclass
@@ -772,8 +773,8 @@ class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
     terminations: AmpTerminationsCfg = AmpTerminationsCfg()
     events: AmpEventCfg = AmpEventCfg()
 
-    # no curriculum (user requirement: flat terrain only)
-    curriculum: object | None = None
+    # curriculum: reward-gated push robots
+    curriculum: AmpCurriculumCfg = AmpCurriculumCfg()
 
     def __post_init__(self):
         """Post-initialization: update sensor periods and physics material."""
