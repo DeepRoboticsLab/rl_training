@@ -116,11 +116,6 @@ class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
     amp_dataset_cfg: AmpDatasetCfg = MISSING
     """AMP motion dataset and replay buffer sub-configuration."""
 
-    # Override symmetry_cfg to accept plain dict (AMP uses custom symmetry)
-    symmetry_cfg: dict = None
-    """Symmetry configuration dict with keys: use_data_augmentation, use_mirror_loss,
-    mirror_loss_coeff, data_augmentation_func."""
-
 
 @configclass
 class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
@@ -221,13 +216,4 @@ class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             replay_buffer_size=200000,
             motion_files=_MOTION_FILES,
         ),
-        # Symmetry
-        symmetry_cfg={
-            "use_data_augmentation": False,
-            "use_mirror_loss": False,
-            "mirror_loss_coeff": 0.1,
-            "data_augmentation_func": (
-                "rl_training.tasks.manager_based.locomotion.amp.symmetry.cr1:compute_symmetric_states"
-            ),
-        },
     )
