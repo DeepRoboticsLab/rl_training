@@ -1,23 +1,35 @@
-import os
+
+"""Motion dataset loader for AMP training.
+
+Loads JSON motion files, standardizes quaternions, and provides
+batch interpolation for sampling expert motion frames during training.
+All operations are performed on CUDA tensors for efficiency.
+"""
+
 import glob
 import json
-import logging
+import os
 
-import torch
 import numpy as np
+import torch
 from pybullet_utils import transformations
 
 from ..utils import utils
-from . import pose3d
-from . import motion_util
+from . import motion_util, pose3d
 
-# Datasets are located under rl_training/rl_training/rsl_rl/datasets/
-_AMP_DATASETS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-DEFAULT_MOTION_GLOB = os.path.join(_AMP_DATASETS_DIR, 'amp_dataset_ik', '*')
+# Datasets are located under this directory
+_AMP_DATASETS_DIR = os.path.abspath(os.path.dirname(__file__))
+DEFAULT_MOTION_GLOB = os.path.join(_AMP_DATASETS_DIR, "amp_dataset_ik", "*")
 
 
 class Dataset_Loader:
-    # 常量定义保持不变
+    """Motion dataset loader with weighted sampling and frame interpolation.
+
+    Loads motion clips from JSON files, stores them as CUDA tensors,
+    and provides batch sampling with linear interpolation for
+    expert motion data during AMP discriminator training.
+    """
+
     POS_SIZE = 3
     ROT_SIZE = 4
     PROJECTED_GRAVITY_SIZE = 3
@@ -46,21 +58,21 @@ class Dataset_Loader:
     JOINT_POSE_END_IDX = JOINT_POSE_START_IDX + JOINT_POS_SIZE  # [16: 36]
 
     JOINT_VEL_START_IDX = JOINT_POSE_END_IDX
-    JOINT_VEL_END_IDX = JOINT_VEL_START_IDX + JOINT_VEL_SIZE  # [36： 56]
+    JOINT_VEL_END_IDX = JOINT_VEL_START_IDX + JOINT_VEL_SIZE  # [36: 56]
 
     HAND_AND_FOOT_POS_START_IDX = JOINT_VEL_END_IDX
-    HAND_AND_FOOT_POS_END_IDX = HAND_AND_FOOT_POS_START_IDX + HAND_AND_FOOT_POS_SIZE  # [56: ]
+    HAND_AND_FOOT_POS_END_IDX = HAND_AND_FOOT_POS_START_IDX + HAND_AND_FOOT_POS_SIZE  # [56: 68]
 
     def __init__(
-            self,
-            device,
-            time_between_frames,
-            num_envs=None,
-            num_transitions_per_env=None,
-            num_frames=2,
-            preload_transitions=False,
-            num_preload_transitions=100000,
-            motion_files=None,
+        self,
+        device: str,
+        time_between_frames: float,
+        num_envs: int | None = None,
+        num_transitions_per_env: int | None = None,
+        num_frames: int = 2,
+        preload_transitions: bool = False,
+        num_preload_transitions: int = 100000,
+        motion_files: list | None = None,
     ):
         self.device = device
         self.time_between_frames = time_between_frames
@@ -70,94 +82,113 @@ class Dataset_Loader:
             self.num_transitions_per_env = num_transitions_per_env
             self.num_envs = num_envs
 
-        # 所有元数据均存储为CUDA张量（移除numpy依赖）
-        self.trajectories_full = []  # 存储完整轨迹（CUDA张量）
+        # All metadata stored as CUDA tensors
+        self.trajectories_full = []
         self.trajectory_names = []
         self.trajectory_idxs = []
-        self.trajectory_lens = torch.tensor([], device=device, dtype=torch.float32)  # 轨迹时长（CUDA）
-        self.trajectory_weights = torch.tensor([], device=device, dtype=torch.float32)  # 采样权重（CUDA）
-        self.trajectory_frame_durations = torch.tensor([], device=device, dtype=torch.float32)  # 每帧时长（CUDA）
-        self.trajectory_num_frames = torch.tensor([], device=device, dtype=torch.float32)  # 总帧数（CUDA）
+        self.trajectory_lens = torch.tensor([], device=device, dtype=torch.float32)
+        self.trajectory_weights = torch.tensor([], device=device, dtype=torch.float32)
+        self.trajectory_frame_durations = torch.tensor([], device=device, dtype=torch.float32)
+        self.trajectory_num_frames = torch.tensor([], device=device, dtype=torch.float32)
         self.trajectory_lens_all = 0.0
 
         if motion_files is None:
             motion_files = glob.glob(DEFAULT_MOTION_GLOB)
         if not motion_files:
-            raise ValueError(f"No motion files found. Pass motion_files explicitly or populate {DEFAULT_MOTION_GLOB}")
+            raise ValueError(
+                f"No motion files found. Pass motion_files explicitly "
+                f"or populate {DEFAULT_MOTION_GLOB}"
+            )
 
         for i, motion_file in enumerate(motion_files):
-            self.trajectory_names.append(motion_file.split('.')[0])
+            self.trajectory_names.append(motion_file.split(".")[0])
             with open(motion_file, "r") as f:
                 motion_json = json.load(f)
-                motion_data = np.array(motion_json["Frames"])  # 临时用numpy读入，随后转为CUDA
+                motion_data = np.array(motion_json["Frames"])
 
                 if motion_data.shape[1] != self.HAND_AND_FOOT_POS_END_IDX:
                     raise ValueError(
-                        f"Motion Data length mismatch: {motion_data.shape[1]} vs {self.HAND_AND_FOOT_POS_END_IDX}")
+                        f"Motion data length mismatch: {motion_data.shape[1]} "
+                        f"vs {self.HAND_AND_FOOT_POS_END_IDX}"
+                    )
 
-                # 标准化四元数（仅在数据加载时用numpy，随后转为CUDA）
+                # Standardize quaternions (numpy only during loading)
                 for f_i in range(motion_data.shape[0]):
                     root_rot = self.get_root_rot(motion_data[f_i])
                     root_rot = pose3d.QuaternionNormalize(root_rot)
                     root_rot = motion_util.standardize_quaternion(root_rot)
                     motion_data[f_i, self.ROOT_ROT_START_IDX:self.ROOT_ROT_END_IDX] = root_rot
 
-                # 转为CUDA张量并存储
-                traj_full = torch.tensor(motion_data[:, :self.HAND_AND_FOOT_POS_END_IDX], dtype=torch.float32,
-                                         device=device)
+                # Convert to CUDA tensor
+                traj_full = torch.tensor(
+                    motion_data[:, :self.HAND_AND_FOOT_POS_END_IDX],
+                    dtype=torch.float32,
+                    device=device,
+                )
                 self.trajectories_full.append(traj_full)
                 self.trajectory_idxs.append(i)
 
-                # 元数据转为CUDA张量并拼接
-                self.trajectory_weights = torch.cat(
-                    [self.trajectory_weights, torch.tensor([float(motion_json["MotionWeight"])], device=device)])
+                # Metadata as CUDA tensors
+                self.trajectory_weights = torch.cat([
+                    self.trajectory_weights,
+                    torch.tensor([float(motion_json["MotionWeight"])], device=device),
+                ])
                 fps = float(motion_json["fps"])
-                self.trajectory_frame_durations = torch.cat(
-                    [self.trajectory_frame_durations, torch.tensor([1.0 / fps], device=device)])
+                self.trajectory_frame_durations = torch.cat([
+                    self.trajectory_frame_durations,
+                    torch.tensor([1.0 / fps], device=device),
+                ])
                 traj_len = (motion_data.shape[0] - 1) / fps
-                self.trajectory_lens = torch.cat([self.trajectory_lens, torch.tensor([traj_len], device=device)])
+                self.trajectory_lens = torch.cat([
+                    self.trajectory_lens,
+                    torch.tensor([traj_len], device=device),
+                ])
                 self.trajectory_lens_all += traj_len
-                self.trajectory_num_frames = torch.cat(
-                    [self.trajectory_num_frames, torch.tensor([motion_data.shape[0]], device=device)])
+                self.trajectory_num_frames = torch.cat([
+                    self.trajectory_num_frames,
+                    torch.tensor([motion_data.shape[0]], device=device),
+                ])
 
-        # 归一化权重（CUDA上操作）
-        print("总轨迹长度(s):", self.trajectory_lens_all)
+        # Normalize sampling weights
+        print(f"[AMP Dataset] Total trajectory length: {self.trajectory_lens_all:.2f}s")
         self.trajectory_weights /= self.trajectory_weights.sum()
 
-        # 预加载（全CUDA操作）
+        # Preload transitions for faster sampling
         self.preload_transitions = preload_transitions
         if self.preload_transitions:
-            print(f'Preloading {num_preload_transitions} transitions to discriminator')
+            print(f"[AMP Dataset] Preloading {num_preload_transitions} transitions")
             traj_idxs = self.weighted_traj_idx_sample_batch(num_preload_transitions)
             times = self.traj_time_sample_batch(traj_idxs, self.num_frames)
             self.preloaded_s = []
             for i in range(self.num_frames):
                 self.preloaded_s.append(
-                    self.get_full_frame_at_time_batch(traj_idxs, times + i * self.time_between_frames))
+                    self.get_full_frame_at_time_batch(traj_idxs, times + i * self.time_between_frames)
+                )
 
-    def weighted_traj_idx_sample_batch(self, size):
-        """CUDA上加权采样轨迹索引（替代np.random.choice）"""
+    def weighted_traj_idx_sample_batch(self, size: int) -> torch.Tensor:
+        """Weighted sampling of trajectory indices using multinomial."""
         return torch.multinomial(self.trajectory_weights, num_samples=size, replacement=True)
 
-    def traj_time_sample_batch(self, traj_idxs, num_frame=1):
-        """CUDA上采样时间点（替代numpy操作）"""
-        subst = self.time_between_frames * num_frame + self.trajectory_frame_durations[traj_idxs]
-        time_samples = self.trajectory_lens[traj_idxs] * torch.rand(len(traj_idxs), device=self.device) - subst
+    def traj_time_sample_batch(self, traj_idxs: torch.Tensor, num_frame: int = 1) -> torch.Tensor:
+        """Sample random time points within each trajectory."""
+        offset = self.time_between_frames * num_frame + self.trajectory_frame_durations[traj_idxs]
+        time_samples = self.trajectory_lens[traj_idxs] * torch.rand(
+            len(traj_idxs), device=self.device
+        ) - offset
         return torch.maximum(torch.zeros_like(time_samples), time_samples)
 
     def slerp(self, val0, val1, blend):
+        """Linear interpolation between two tensors."""
         return (1.0 - blend) * val0 + blend * val1
 
-    def get_full_frame_at_time_batch(self, traj_idxs, times):
-        """全CUDA操作：批量获取插值帧"""
+    def get_full_frame_at_time_batch(self, traj_idxs: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
+        """Batch interpolate motion frames at given times across trajectories."""
         p = times / self.trajectory_lens[traj_idxs]
         n = self.trajectory_num_frames[traj_idxs]
 
-        # 替代np.floor和np.ceil（CUDA上操作）
         idx_low = torch.floor(p * n).long()
         idx_high = torch.ceil(p * n).long()
 
-        # 初始化插值张量（直接在CUDA上分配）
         batch_size = len(traj_idxs)
         all_frame_pos_starts = torch.zeros(batch_size, self.POS_SIZE, device=self.device)
         all_frame_pos_ends = torch.zeros_like(all_frame_pos_starts)
@@ -167,33 +198,32 @@ class Dataset_Loader:
         all_frame_amp_starts = torch.zeros(batch_size, amp_dim, device=self.device)
         all_frame_amp_ends = torch.zeros_like(all_frame_amp_starts)
 
-        # 遍历唯一轨迹索引（CUDA张量直接操作）
-        for traj_idx in traj_idxs.unique():  # 用torch.unique替代set()，避免CPU转换
+        # Process each unique trajectory index
+        for traj_idx in traj_idxs.unique():
             traj_mask = traj_idxs == traj_idx
             trajectory = self.trajectories_full[traj_idx]
 
-            # 批量填充（CUDA上索引操作）
             all_frame_pos_starts[traj_mask] = self.get_root_pos_batch(trajectory[idx_low[traj_mask]])
             all_frame_pos_ends[traj_mask] = self.get_root_pos_batch(trajectory[idx_high[traj_mask]])
             all_frame_rot_starts[traj_mask] = self.get_root_rot_batch(trajectory[idx_low[traj_mask]])
             all_frame_rot_ends[traj_mask] = self.get_root_rot_batch(trajectory[idx_high[traj_mask]])
-            all_frame_amp_starts[traj_mask] = trajectory[idx_low[traj_mask]][:,
-                                              self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX]
-            all_frame_amp_ends[traj_mask] = trajectory[idx_high[traj_mask]][:,
-                                            self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX]
+            all_frame_amp_starts[traj_mask] = trajectory[idx_low[traj_mask]][
+                :, self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX
+            ]
+            all_frame_amp_ends[traj_mask] = trajectory[idx_high[traj_mask]][
+                :, self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX
+            ]
 
-        # 插值系数计算（全CUDA）
         blend = (p * n - idx_low).unsqueeze(-1).to(dtype=torch.float32)
 
-        # 插值操作
         pos_blend = self.slerp(all_frame_pos_starts, all_frame_pos_ends, blend)
         rot_blend = utils.quaternion_slerp(all_frame_rot_starts, all_frame_rot_ends, blend)
         amp_blend = self.slerp(all_frame_amp_starts, all_frame_amp_ends, blend)
 
         return torch.cat([pos_blend, rot_blend, amp_blend], dim=-1)
 
-    def get_full_frame_batch(self, batch_size):
-        """全CUDA批量获取帧（无numpy操作）"""
+    def get_full_frame_batch(self, batch_size: int) -> torch.Tensor:
+        """Sample a batch of full motion frames."""
         if self.preload_transitions:
             idxs = torch.randint(0, self.preloaded_s[0].shape[0], (batch_size,), device=self.device)
             return self.preloaded_s[0][idxs]
@@ -202,19 +232,21 @@ class Dataset_Loader:
             times = self.traj_time_sample_batch(traj_idxs, self.num_frames)
             return self.get_full_frame_at_time_batch(traj_idxs, times)
 
-    def feed_forward_generator(self, num_mini_batches, num_epochs=5):
-        """生成器：全CUDA操作，无CPU交互"""
+    def feed_forward_generator(self, num_mini_batches: int, num_epochs: int = 5):
+        """Yield mini-batches of expert motion frames for discriminator training."""
         batch_size = self.num_envs * self.num_transitions_per_env
         mini_batch_size = batch_size // num_mini_batches
 
-        for epoch in range(num_epochs):
-            for i in range(num_mini_batches):
+        for _ in range(num_epochs):
+            for _ in range(num_mini_batches):
                 if self.preload_transitions:
-                    # CUDA随机索引
-                    start_idx = torch.randint(0, self.preloaded_s[0].shape[0], (mini_batch_size,), device=self.device)
+                    idxs = torch.randint(
+                        0, self.preloaded_s[0].shape[0], (mini_batch_size,), device=self.device
+                    )
                     frames = [
-                        self.preloaded_s[i][start_idx][:,
-                        self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX]
+                        self.preloaded_s[i][idxs][
+                            :, self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX
+                        ]
                         for i in range(self.num_frames)
                     ]
                 else:
@@ -223,14 +255,14 @@ class Dataset_Loader:
                     frames = []
                     for i in range(self.num_frames):
                         frames.append(
-                            self.get_full_frame_at_time_batch(traj_idx, start_time + i * self.time_between_frames)
-                            [:, self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX]
+                            self.get_full_frame_at_time_batch(
+                                traj_idx, start_time + i * self.time_between_frames
+                            )[:, self.PROJECTED_GRAVITY_START_IDX:self.HAND_AND_FOOT_POS_END_IDX]
                         )
                 yield torch.stack(frames).transpose(0, 1)
 
-    # 工具方法保持不变（均操作CUDA张量）
     @property
-    def num_motions(self):
+    def num_motions(self) -> int:
         return len(self.trajectory_names)
 
     def get_root_pos(self, pose):

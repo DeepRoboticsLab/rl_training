@@ -3,38 +3,41 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""CE-Net: Context-Encoder Network with VAE for asymmetric actor-critic."""
+
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
 
 from rsl_rl.modules import MLP
 
+
 class CENet(nn.Module):
-    """CE-Net: Context-Encoder Network with VAE for asymmetric actor-critic.
+    """Context-Encoder Network with VAE for asymmetric actor-critic.
 
     Encodes history observations into latent representations (explicit + implicit),
     and decodes implicit latents into future observation predictions.
     Used as a standalone module alongside separate actor/critic MLPModels.
     """
 
-    def __init__(self,
-                 num_actor_obs,
-                 num_future_obs,
-                 len_prio_history=1,
-                 latent_dims=None,
-                 est_terms=None,
-                 encoder_hidden_dims=None,
-                 decoder_hidden_dims=None,
-                 activation='elu',
-                 latent_to_obs_pred=False,
-                 **kwargs):
-        super(CENet, self).__init__()
+    def __init__(
+        self,
+        num_actor_obs: int,
+        num_future_obs: int,
+        len_prio_history: int = 1,
+        latent_dims: int | None = None,
+        est_terms: dict | None = None,
+        encoder_hidden_dims: list | None = None,
+        decoder_hidden_dims: list | None = None,
+        activation: str = "elu",
+        **kwargs,
+    ):
+        super().__init__()
 
         if latent_dims is None:
             if est_terms is not None:
-                latent_dims = sum([term["dim"] for term in est_terms.values()])
+                latent_dims = sum(term["dim"] for term in est_terms.values())
             else:
                 latent_dims = 19
         if est_terms is None:
@@ -45,90 +48,88 @@ class CENet(nn.Module):
             encoder_hidden_dims = [512, 256, 64]
 
         if kwargs:
-            print("CENet.__init__ got unexpected args, ignoring: " + str([k for k in kwargs.keys()]))
+            print(f"[CENet] Unexpected args, ignoring: {list(kwargs.keys())}")
 
         self.est_terms = est_terms
         self.est_explicit_key = [k for k, d in est_terms.items() if d["type"] == "explicit"]
         self.num_actor_obs = num_actor_obs
         self.num_history_frames = len_prio_history
-        encoder_input_dim = num_actor_obs * self.num_history_frames
-        self.latent_to_obs_pred = latent_to_obs_pred
         self.latent_dims = latent_dims
 
-        self.encoder = MLP(input_dim=encoder_input_dim, output_dim=latent_dims,
-                          hidden_dims=encoder_hidden_dims, activation=activation)
+        encoder_input_dim = num_actor_obs * self.num_history_frames
+        self.encoder = MLP(
+            input_dim=encoder_input_dim,
+            output_dim=latent_dims,
+            hidden_dims=encoder_hidden_dims,
+            activation=activation,
+        )
 
         # Explicit estimation layers
-        est_explicit_dict = {k: nn.Linear(latent_dims, d["dim"]) for k, d in est_terms.items() if d["type"] == "explicit"}
+        est_explicit_dict = {
+            k: nn.Linear(latent_dims, d["dim"])
+            for k, d in est_terms.items()
+            if d["type"] == "explicit"
+        }
         self.est_explicit_layers = nn.ModuleDict(est_explicit_dict)
 
         # Implicit estimation (VAE)
-        if est_terms['implicit']["dim"] > 0:
-            self.fc_mu = nn.Linear(latent_dims, est_terms['implicit']["dim"])
-            self.fc_var = nn.Linear(latent_dims, est_terms['implicit']["dim"])
-            if self.latent_to_obs_pred:
-                self.decoder = MLP(input_dim=latent_dims, output_dim=num_future_obs,
-                                  hidden_dims=decoder_hidden_dims, activation=activation)
-            else:
-                self.decoder = MLP(input_dim=est_terms['implicit']["dim"], output_dim=num_future_obs,
-                                  hidden_dims=decoder_hidden_dims, activation=activation)
-            self.has_implicit = True
-        else:
-            self.has_implicit = False
-            raise RuntimeError("Implicit latent dimensions less than 0")
+        self.fc_mu = nn.Linear(latent_dims, est_terms["implicit"]["dim"])
+        self.fc_var = nn.Linear(latent_dims, est_terms["implicit"]["dim"])
+        self.decoder = MLP(
+            input_dim=est_terms["implicit"]["dim"],
+            output_dim=num_future_obs,
+            hidden_dims=decoder_hidden_dims,
+            activation=activation,
+        )
 
-        print(f"[CE-NET] Encoder MLP: {self.encoder}")
-        print(f"[CE-NET] Decoder MLP: {self.decoder}")
+        print(f"[CENet] Encoder MLP: {self.encoder}")
+        print(f"[CENet] Decoder MLP: {self.decoder}")
 
-    def encode(self, obs_h, **kwargs):
+    def encode(self, obs_h: torch.Tensor, **kwargs):
+        """Encode history observations into explicit and implicit latents.
+
+        Returns:
+            encodings: Dict mapping term names to latent tensors.
+            mu: Mean of the implicit latent distribution.
+            log_var: Log-variance of the implicit latent distribution.
+        """
         encodings = {}
         latent = self.encoder(obs_h)
+
         # Explicit estimation
         est_explicit = [torch.clip(layer(latent), -10, 10) for layer in self.est_explicit_layers.values()]
         encodings.update({k: v for k, v in zip(self.est_explicit_key, est_explicit)})
+
         # Implicit estimation (VAE)
-        if self.has_implicit:
-            mu = torch.clip(self.fc_mu(latent), -10, 10)
-            log_var = torch.clip(self.fc_var(latent), -10, 10)
-            z = torch.clip(self.reparameterize(mu, log_var), -10, 10)
-            encodings["implicit"] = z
-            return encodings, mu, log_var
-        else:
-            return encodings
+        mu = torch.clip(self.fc_mu(latent), -10, 10)
+        log_var = torch.clip(self.fc_var(latent), -10, 10)
+        z = torch.clip(self.reparameterize(mu, log_var), -10, 10)
+        encodings["implicit"] = z
 
-    def decode(self, encodings):
-        decodings = {}
-        if self.latent_to_obs_pred:
-            obs_pred = self.decoder(torch.cat([encodings[k] for k in self.est_terms.keys()], dim=-1))
-            decodings["obs_pred"] = self.decoder(obs_pred)
-        else:
-            decodings["obs_pred"] = self.decoder(encodings["implicit"])
-        return decodings
+        return encodings, mu, log_var
 
-    def ce_net(self, obs_h, **kwargs):
-        if self.has_implicit:
-            encodings, mu, log_var = self.encode(obs_h)
-            return encodings, self.decode(encodings), mu, log_var
-        else:
-            return self.encode(obs_h)
+    def decode(self, encodings: dict) -> dict:
+        """Decode implicit latents into future observation predictions."""
+        return {"obs_pred": self.decoder(encodings["implicit"])}
 
-    def get_encodings_cat(self, obs_h):
-        """Encode and return concatenated encodings (for injection into actor input)."""
-        if self.has_implicit:
-            encodings, _, _ = self.encode(obs_h)
-            encodings_list = [v for k, v in encodings.items() if (k != "implicit") and (k in self.est_terms.keys())]
-            encodings_list.append(encodings["implicit"])
-            return torch.cat(encodings_list, dim=-1)
-        else:
-            encodings = self.encode(obs_h)
-            return torch.cat([encodings[k] for k in self.est_terms.keys()], dim=-1)
+    def forward(self, obs_h: torch.Tensor, **kwargs):
+        """Full forward pass: encode + decode.
 
-    def reparameterize(self, mu, logvar):
+        Returns:
+            encodings, decodings, mu, log_var
         """
+        encodings, mu, log_var = self.encode(obs_h)
+        return encodings, self.decode(encodings), mu, log_var
 
-        :param mu: (Tensor) Mean of the latent Gaussian
-        :param logvar: (Tensor) Standard deviation of the latent Gaussian
-        :return:
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """VAE reparameterization trick: z = mu + std * eps.
+
+        Args:
+            mu: Mean of the latent Gaussian.
+            logvar: Log-variance of the latent Gaussian.
+
+        Returns:
+            Sampled latent tensor.
         """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)

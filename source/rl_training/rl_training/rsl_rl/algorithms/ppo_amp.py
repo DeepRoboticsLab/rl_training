@@ -17,7 +17,6 @@ import inspect
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from itertools import chain
 from tensordict import TensorDict
 
 
@@ -26,8 +25,6 @@ from rsl_rl.env import VecEnv
 from rsl_rl.models import MLPModel
 from rsl_rl.storage import RolloutStorage
 from rsl_rl.utils import resolve_callable, resolve_obs_groups
-from rsl_rl.extensions import resolve_symmetry_config
-
 from ..modules.ce_net import CENet
 from ..modules.amp_discriminator import AMP_Discriminator
 from ..storage.amp_storage import ReplayBuffer
@@ -55,20 +52,11 @@ class AMPInferencePolicy(nn.Module):
 
     def _forward_impl(self, obs: torch.Tensor, obs_history: torch.Tensor) -> torch.Tensor:
         """Core logic shared by forward() and export wrappers."""
-        # CE-Net encoding (use mu for implicit, matching old AsymActorCritic.forward)
-        if self.ce_net.has_implicit:
-            encodings, mu, _ = self.ce_net.encode(obs_history)
-            encodings_list = [
-                v for k, v in encodings.items()
-                if k != "implicit" and k in self.ce_net.est_terms.keys()
-            ]
-            encodings_list.append(mu)
-            latent = torch.cat(encodings_list, dim=-1)
-        else:
-            encodings = self.ce_net.encode(obs_history)
-            latent = torch.cat(
-                [encodings[k] for k in self.ce_net.est_terms.keys()], dim=-1
-            )
+        # CE-Net encoding: use mu (deterministic) for implicit latent
+        encodings, mu, _ = self.ce_net.encode(obs_history)
+        encodings_list = [v for k, v in encodings.items() if k != "implicit" and k in self.ce_net.est_terms.keys()]
+        encodings_list.append(mu)
+        latent = torch.cat(encodings_list, dim=-1)
 
         # Concatenate obs + latent
         actor_input = torch.cat([obs, latent], dim=-1)
@@ -150,21 +138,15 @@ class PPO_AMP(PPO):
         est_terms: dict | None = None,
         # RND parameters
         rnd_cfg: dict | None = None,
-        # Symmetry parameters
-        symmetry_cfg: dict | None = None,
         # Distributed training parameters
         multi_gpu_cfg: dict | None = None,
-        # Environment handle (for symmetry augmentation)
-        env: VecEnv | None = None,
         device: str = "cpu",
         **kwargs,
     ) -> None:
         # ------------------------------------------------------------------ #
         # Call base PPO __init__ to set up actor, critic, storage, optimizer
         # ------------------------------------------------------------------ #
-        # We pass symmetry_cfg=None to base PPO to avoid its symmetry setup
-        # (PPO_AMP handles symmetry separately). The base PPO stores
-        # self.actor, self.critic, self.optimizer, self.storage, etc.
+        # Base PPO stores self.actor, self.critic, self.optimizer, self.storage, etc.
         super().__init__(
             actor=actor,
             critic=critic,
@@ -185,31 +167,8 @@ class PPO_AMP(PPO):
             normalize_advantage_per_mini_batch=normalize_advantage_per_mini_batch,
             device=device,
             rnd_cfg=rnd_cfg,
-            symmetry_cfg=None,  # PPO_AMP handles symmetry itself
             multi_gpu_cfg=multi_gpu_cfg,
         )
-
-        # Override base PPO's symmetry with AMP-specific handling
-        self.env = env
-
-        if symmetry_cfg is not None:
-            self.symmetry = symmetry_cfg  # store the raw dict
-            self.use_symmetry_data_augmentation = symmetry_cfg.get("use_data_augmentation", False)
-            self.use_symmetry_mirror_loss = symmetry_cfg.get("use_mirror_loss", False)
-            self.mirror_loss_coeff = symmetry_cfg.get("mirror_loss_coeff", 0.0)
-            self.use_symmetry = (
-                self.use_symmetry_data_augmentation or self.use_symmetry_mirror_loss
-            )
-            # Resolve the data augmentation function
-            func_ref = symmetry_cfg.get("data_augmentation_func", None)
-            self.compute_symmetric_states = resolve_callable(func_ref) if func_ref is not None else None
-        else:
-            self.symmetry = None
-            self.use_symmetry_data_augmentation = False
-            self.use_symmetry_mirror_loss = False
-            self.mirror_loss_coeff = 0.0
-            self.use_symmetry = False
-            self.compute_symmetric_states = None
 
         # ------------------------------------------------------------------ #
         # CE-Net module
@@ -241,13 +200,13 @@ class PPO_AMP(PPO):
         _discriminate_learning_rate = _disc_cfg.get("learning_rate", 1e-4)
 
         # ------------------------------------------------------------------ #
-        # AMP replay buffer (initialised in construct_algorithm)
+        # AMP replay buffer
         # ------------------------------------------------------------------ #
         self.amp_storage: ReplayBuffer | None = None
         self.amp_transition: ReplayBuffer.Transition | None = None
 
         # ------------------------------------------------------------------ #
-        # Additional optimizers (CE-Net and AMP discriminator)
+        # Additional optimizers
         # ------------------------------------------------------------------ #
         self.ce_optimizer = optim.Adam(self.ce_net.parameters(), lr=learning_rate)
         self.amp_optimizer = optim.Adam(
@@ -263,15 +222,14 @@ class PPO_AMP(PPO):
     # ------------------------------------------------------------------ #
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample actions from the policy and store transition data."""
-        policy_obs = obs["policy"]
-        critic_obs = obs["critic"]
         obs_history = obs["obs_history"]
 
         # CE-Net encoding: compute latent and inject into obs for actor
-        encodings_cat = self.ce_net.get_encodings_cat(obs_history)
-        # Create a modified obs dict with latent injected.
-        # amp_obs_history is excluded — it's stored separately in the AMP
-        # replay buffer, not needed in PPO storage.
+        encodings, _, _ = self.ce_net.encode(obs_history)
+        encodings_list = [v for k, v in encodings.items() if (k != "implicit") and (k in self.est_terms.keys())]
+        encodings_list.append(encodings["implicit"])
+        encodings_cat = torch.cat(encodings_list, dim=-1)
+
         obs_with_latent = obs.clone()
         obs_with_latent["latent"] = encodings_cat.detach()
         del obs_with_latent["amp_obs_history"]
@@ -296,13 +254,13 @@ class PPO_AMP(PPO):
         extras: dict,
     ) -> None:
         """Record one environment step and update AMP replay buffer."""
-        # Update normalizers (base PPO interface)
+        # Update normalizers
         self.actor.update_normalization(obs)
         self.critic.update_normalization(obs)
 
         # observation from the new obs TensorDict
         obs_future = obs["obs_future"]
-        amp_obs = obs["amp_obs_history"]  # already 3D: (num_envs, amp_num_frames, amp_obs_dim)
+        amp_obs = obs["amp_obs_history"]
 
         self.transition.observations["obs_future"] = obs_future.detach()
         self.amp_transition.obs = amp_obs.detach()
@@ -327,7 +285,7 @@ class PPO_AMP(PPO):
         self.amp_transition.clear()
 
     # ------------------------------------------------------------------ #
-    # compute_returns – TD-lambda advantage estimation
+    # compute_returns
     # ------------------------------------------------------------------ #
     def compute_returns(self, obs: TensorDict) -> None:
         """Compute return and advantage targets."""
@@ -358,9 +316,6 @@ class PPO_AMP(PPO):
             "policy_pred": 0.0, "expert_pred": 0.0,
             "value": 0.0, "surrogate": 0.0, "entropy": 0.0,
         })
-        if self.mirror_loss_coeff:
-            mean_loss["symmetry"] = 0.0
-
         # Mini-batch generators
         generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         amp_policy_gen = self.amp_storage.feed_forward_generator(self.num_mini_batches, self.num_learning_epochs)
@@ -380,14 +335,9 @@ class PPO_AMP(PPO):
     # learning_mini_epoch – per-mini-batch gradient updates
     # ------------------------------------------------------------------ #
     def _learning_mini_epoch(self, batch, amp_policy_batch, amp_expert_batch, mean_loss: dict) -> None:
-        original_batch_size = batch.observations.batch_size[0]
-
         # Extract observations from TensorDict
-        policy_obs = batch.observations["policy"]
-        critic_obs = batch.observations["critic"]
         obs_history = batch.observations["obs_history"]
         obs_future = batch.observations["obs_future"]
-        latent = batch.observations["latent"]
         est_explicit_batch = [
             batch.observations[k] for k in self.est_explicit_key if k in batch.observations
         ]
@@ -397,47 +347,26 @@ class PPO_AMP(PPO):
             with torch.no_grad():
                 batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
 
-        # -- Symmetry data augmentation -------------------------------- #
-        if self.use_symmetry_data_augmentation and self.compute_symmetric_states is not None:
-            obs_aug, actions_aug = self.compute_symmetric_states(
-                env=self.env, obs=batch.observations, actions=batch.actions
-            )
-            policy_obs = obs_aug["policy"]
-            obs_history = obs_aug.get("obs_history", policy_obs)
-            critic_obs = obs_aug["critic"]
-            if obs_future is not None:
-                obs_future = obs_aug.get("obs_future", obs_future)
-            est_explicit_batch = [obs_aug[k] for k in self.est_explicit_key if k in obs_aug]
-            actions_batch = actions_aug
-            num_aug = int(policy_obs.shape[0] / original_batch_size)
-            old_actions_log_prob = batch.old_actions_log_prob.repeat(num_aug, 1)
-            target_values = batch.values.repeat(num_aug, 1)
-            advantages = batch.advantages.repeat(num_aug, 1)
-            returns = batch.returns.repeat(num_aug, 1)
-            old_mu = batch.old_distribution_params[0].repeat(num_aug, 1)
-            old_sigma = batch.old_distribution_params[1].repeat(num_aug, 1)
-        else:
-            actions_batch = batch.actions
-            old_actions_log_prob = batch.old_actions_log_prob
-            target_values = batch.values
-            advantages = batch.advantages
-            returns = batch.returns
-            old_mu = batch.old_distribution_params[0]
-            old_sigma = batch.old_distribution_params[1]
+        actions_batch = batch.actions
+        old_actions_log_prob = batch.old_actions_log_prob
+        target_values = batch.values
+        advantages = batch.advantages
+        returns = batch.returns
+        old_mu = batch.old_distribution_params[0]
+        old_sigma = batch.old_distribution_params[1]
 
         # -- PPO loss ------------------------------------------------- #
         # Forward through actor (MLPModel) with stochastic output
         self.actor(batch.observations, stochastic_output=True)
         actions_log_prob = self.actor.get_output_log_prob(actions_batch)
         value_batch = self.critic(batch.observations)
-        mu_batch = self.actor.output_mean[:original_batch_size]
-        sigma_batch = self.actor.output_std[:original_batch_size]
-        entropy_batch = self.actor.output_entropy[:original_batch_size]
+        mu_batch = self.actor.output_mean
+        sigma_batch = self.actor.output_std
+        entropy_batch = self.actor.output_entropy
 
-        # Adaptive learning rate (matched to old deeprobotics PPO)
+        # Adaptive learning rate based on KL divergence
         if self.desired_kl is not None and self.schedule == "adaptive":
             with torch.inference_mode():
-                # Manual KL formula for numerical stability (matches old PPO.adjust_learning_rate)
                 dist_diff = torch.log(sigma_batch / old_sigma + 1e-5)
                 dist_diff += (torch.square(old_sigma) + torch.square(old_mu - mu_batch)) / (2.0 * torch.square(sigma_batch)) - 0.5
                 kl = torch.sum(dist_diff, dim=-1).mean()
@@ -469,46 +398,6 @@ class PPO_AMP(PPO):
         mean_loss["value"] += value_loss.item()
         mean_loss["surrogate"] += surrogate_loss.item()
         mean_loss["entropy"] += self.entropy_coef * entropy_batch.mean().item()
-
-        # -- Symmetry mirror loss ------------------------------------- #
-        if self.use_symmetry_mirror_loss and self.compute_symmetric_states is not None:
-            if self.use_symmetry_data_augmentation:
-                mean_actions = self.actor.deterministic_output(
-                    self.actor.get_latent(actor_input_obs)
-                )
-            else:
-                encodings_orig = self.ce_net.get_encodings_cat(
-                    batch.observations.get("obs_history", batch.observations["policy"])
-                )
-                actor_input_orig = batch.observations.clone()
-                actor_input_orig["latent"] = encodings_orig
-                mean_actions = self.actor.deterministic_output(
-                    self.actor.get_latent(actor_input_orig)
-                )
-
-            action_mean_orig = mean_actions[:original_batch_size]
-            _, actions_mean_symm = self.compute_symmetric_states(
-                env=self.env, obs=None, actions=action_mean_orig
-            )
-            if not self.use_symmetry_data_augmentation:
-                obs_aug, _ = self.compute_symmetric_states(
-                    env=self.env, obs=batch.observations, actions=None
-                )
-                enc_aug = self.ce_net.get_encodings_cat(obs_aug.get("obs_history", obs_aug["policy"]))
-                actor_input_aug = obs_aug.clone()
-                actor_input_aug["latent"] = enc_aug
-                mean_actions_aug = self.actor.deterministic_output(
-                    self.actor.get_latent(actor_input_aug)
-                )
-            else:
-                mean_actions_aug = mean_actions
-
-            symmetry_loss = nn.functional.l1_loss(
-                mean_actions_aug[original_batch_size:],
-                actions_mean_symm.detach()[original_batch_size:] if actions_mean_symm.shape[0] > original_batch_size else actions_mean_symm.detach(),
-            )
-            loss += self.mirror_loss_coeff * symmetry_loss
-            mean_loss["symmetry"] += self.mirror_loss_coeff * symmetry_loss.item()
 
         # -- AMP discriminator loss ----------------------------------- #
         batch_size = amp_policy_batch.shape[0]
@@ -548,8 +437,8 @@ class PPO_AMP(PPO):
 
         # -- CE-Net loss --------------------------------------------- #
         ce_loss = torch.zeros(1, requires_grad=False, dtype=torch.float, device=self.device)
-        if self.ce_net.has_implicit and obs_future is not None:
-            encodings, decodings, mu, log_var = self.ce_net.ce_net(obs_history)
+        if obs_future is not None:
+            encodings, decodings, mu, log_var = self.ce_net(obs_history)
             explicit_est = [encodings[k] for k in self.est_explicit_key]
             obs_pred = decodings["obs_pred"]
             kld_loss = torch.mean(
@@ -559,7 +448,7 @@ class PPO_AMP(PPO):
             ce_loss = ce_loss + self.vae_kl_coeff * kld_loss + self.obs_mse_coeff * obs_mse_loss
             mean_loss["obs_pred"] += obs_mse_loss.item()
         else:
-            encodings = self.ce_net.ce_net(obs_history)
+            encodings, _, _ = self.ce_net.encode(obs_history)
             explicit_est = [encodings[k] for k in self.est_explicit_key]
         ce_loss = ce_loss + self._get_explicit_est_loss(explicit_est, est_explicit_batch, mean_loss)
 
@@ -678,10 +567,9 @@ class PPO_AMP(PPO):
     def get_inference_policy(self) -> "AMPInferencePolicy":
         """Return a combined CE-Net + Actor wrapper for inference.
 
-        This mirrors the old AsymActorCritic.forward(obs, obs_h) interface:
-        - Encodes obs_history through CE-Net (uses mu for implicit, not sampled z)
-        - Concatenates obs + latent and forwards through actor MLP
-        - Returns deterministic action mean
+        Encodes obs_history through CE-Net (uses mu for implicit, not sampled z),
+        concatenates obs + latent, and forwards through actor MLP to return
+        the deterministic action mean.
         """
         self.eval_mode()
         return AMPInferencePolicy(self.ce_net, self.actor)
@@ -726,22 +614,19 @@ class PPO_AMP(PPO):
         default_sets = ["actor", "critic"]
         cfg["obs_groups"] = resolve_obs_groups(obs_with_latent, cfg["obs_groups"], default_sets)
 
-        # Resolve symmetry config
-        cfg["algorithm"] = resolve_symmetry_config(cfg["algorithm"], env)
-
-        # Initialize actor (MLPModel) - takes ["policy", "latent"] as obs groups
+        # Initialize actor (MLPModel) 
         actor: MLPModel = actor_class(
             obs_with_latent, cfg["obs_groups"], "actor", _env.action_manager.total_action_dim, **cfg["actor"]
         ).to(device)
         print(f"[AMP] Actor Model: {actor}")
 
-        # Initialize critic (MLPModel) - takes ["critic"] as obs groups
+        # Initialize critic (MLPModel)
         critic: MLPModel = critic_class(
             obs_with_latent, cfg["obs_groups"], "critic", 1, **cfg["critic"]
         ).to(device)
         print(f"[AMP] Critic Model: {critic}")
 
-        # Initialize CE-Net (standalone nn.Module) from ce_net_cfg
+        # Initialize CE-Net
         est_terms = ce_net_cfg.get("est_terms", {})
         num_actor_obs = obs_with_latent["policy"].shape[-1]
         num_obs_future = obs_with_latent["obs_future"].shape[-1]
@@ -788,10 +673,6 @@ class PPO_AMP(PPO):
         )
 
         # Auto-filter: pass only params that __init__ accepts.
-        # Sub-configs (ce_net_cfg, amp_disc_cfg, amp_dataset_cfg) were popped
-        # above, so only PPO-level params remain in alg_cfg and flow through
-        # the auto-filter. Params extracted for explicit module construction
-        # are passed directly below.
         _sig = inspect.signature(alg_class)
         _constructed = {"ce_net_cfg", "amp_disc_cfg", "est_terms"}
         init_alg_cfg = {
@@ -811,13 +692,12 @@ class PPO_AMP(PPO):
             ce_net_cfg=ce_net_cfg,
             amp_disc_cfg=amp_disc_cfg,
             est_terms=est_terms,
-            env=env,
             device=device,
             **init_alg_cfg,
             multi_gpu_cfg=cfg.get("multi_gpu"),
         )
 
-        # Init AMP replay buffer directly (no separate init_amp_storage method)
+        # Init AMP replay buffer
         alg.amp_storage = ReplayBuffer(
             _env.num_envs,
             cfg["num_steps_per_env"],
@@ -828,7 +708,6 @@ class PPO_AMP(PPO):
         )
         alg.amp_transition = ReplayBuffer.Transition()
 
-        # Pass AMP components back to environment
         if hasattr(_env, "_set_amp_discriminator"):
             _env._set_amp_discriminator(alg.amp_discriminator, alg.amp_normalizer, alg.amp_dataset)
 
