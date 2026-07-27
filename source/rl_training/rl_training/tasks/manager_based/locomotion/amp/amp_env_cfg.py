@@ -125,7 +125,7 @@ class AmpCommandsCfg:
         ranges=mdp.AmpVelocityCommandCfg.Ranges(
             lin_vel_x=(-1.0, 1.4),
             lin_vel_y=(-0.5, 0.5),
-            ang_vel_yaw=(-1.2, 1.2),
+            ang_vel_z=(-1.2, 1.2),
             heading=(-3.14, 3.14),
         ),
     )
@@ -175,7 +175,7 @@ class AmpObservationsCfg:
             noise=Unoise(n_min=-0.035, n_max=0.035),
             clip=(-100.0, 100.0),
         )
-        velocity_command = ObsTerm(
+        velocity_commands = ObsTerm(
             func=mdp.velocity_command,
             params={"command_name": "base_velocity"},
             scale=(obs_scales.lin_vel, obs_scales.lin_vel, obs_scales.ang_vel),
@@ -219,7 +219,7 @@ class AmpObservationsCfg:
         body_vel = ObsTerm(func=mdp.base_lin_vel, scale=obs_scales.lin_vel, clip=(-100.0, 100.0))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=obs_scales.ang_vel, clip=(-100.0, 100.0))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0))
-        velocity_command = ObsTerm(
+        velocity_commands = ObsTerm(
             func=mdp.velocity_command,
             params={"command_name": "base_velocity"},
             scale=(obs_scales.lin_vel, obs_scales.lin_vel, obs_scales.ang_vel),

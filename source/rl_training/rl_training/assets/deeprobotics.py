@@ -122,11 +122,11 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
 
 
 # ---------------------------------------------------------------------------
-# DR02 (DR02-STD) - Full humanoid robot with 21 DOF
+# DR02 (DR02-Pro)
 # ---------------------------------------------------------------------------
 DR02_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/pro/CR1-B2.urdf",
+        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/pro/DR02-pro_fix_joints.urdf",
         fix_base=False,
         merge_fixed_joints=True,
         replace_cylinders_with_capsules=False,
@@ -143,8 +143,8 @@ DR02_CFG = ArticulationCfg(
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,
-            solver_position_iteration_count=4,
-            solver_velocity_iteration_count=1,
+            solver_position_iteration_count=8,
+            solver_velocity_iteration_count=2,
             fix_root_link=False,
         ),
         joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(

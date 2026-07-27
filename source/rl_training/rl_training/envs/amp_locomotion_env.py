@@ -28,14 +28,23 @@ import torch
 
 from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedRLEnvCfg
 from isaaclab.utils import configclass
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+from tensordict import TensorDict
 
 from rl_training.managers import AmpHelperCfg, AmpHelperManager
 
-# Constants (must match amp_env_cfg.py — kept here to avoid circular import)
-_AMP_NUM_FRAMES = 5
-_AMP_HISTORY_STRIDE = 2
-# Number of policy observation history frames (must match AmpHelperManager)
-_OBS_HISTORY_LENGTH = 10
+
+class AmpRslRlVecEnvWrapper(RslRlVecEnvWrapper):
+    """Custom wrapper that returns obs_buf (includes obs_history from AmpHelperManager).
+
+    The base RslRlVecEnvWrapper.get_observations() calls observation_manager.compute()
+    directly, which only returns configured observation groups. This misses
+    obs_history which is maintained by AmpHelperManager and stored in obs_buf.
+    """
+
+    def get_observations(self) -> TensorDict:
+        """Return the env's obs_buf which includes obs_history."""
+        return TensorDict(self.unwrapped.obs_buf, batch_size=[self.num_envs])
 
 
 class AmpLocomotionEnvCfg(ManagerBasedRLEnvCfg):

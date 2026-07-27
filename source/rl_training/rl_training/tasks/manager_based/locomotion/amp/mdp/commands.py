@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class AmpVelocityCommand(CommandTerm):
     """AMP velocity command generator for humanoid locomotion.
 
-    Command has 5 dimensions: [lin_vel_x, lin_vel_y, ang_vel_yaw, heading, raw_ang_vel_yaw].
+    Command has 5 dimensions: [lin_vel_x, lin_vel_y, ang_vel_z, heading, raw_ang_vel_z].
 
     Features:
     - Heading-based angular velocity control with tracking_strength
@@ -76,7 +76,7 @@ class AmpVelocityCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         """The desired velocity command. Shape is (num_envs, 5).
 
-        [lin_vel_x, lin_vel_y, ang_vel_yaw, heading, raw_ang_vel_yaw]
+        [lin_vel_x, lin_vel_y, ang_vel_z, heading, raw_ang_vel_z]
         """
         return self.vel_command_b
 
@@ -160,7 +160,7 @@ class AmpVelocityCommand(CommandTerm):
         # Heading / angular velocity
         if self.cfg.heading_command:
             self.vel_command_b[env_ids, 3] = r.uniform_(*self.cfg.ranges.heading)
-            self.vel_command_b[env_ids, 4] = r.uniform_(*self.cfg.ranges.ang_vel_yaw)
+            self.vel_command_b[env_ids, 4] = r.uniform_(*self.cfg.ranges.ang_vel_z)
             self.vel_command_b[env_ids, 4] *= torch.abs(self.vel_command_b[env_ids, 4]) > self.cfg.zero_cmd_threshold_z
 
             # Zero heading for stopped envs
@@ -173,7 +173,7 @@ class AmpVelocityCommand(CommandTerm):
                 heading = torch.atan2(forward[:, 1], forward[:, 0])
                 self.vel_command_b[stop_ids, 3] = heading
         else:
-            self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_yaw)
+            self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
             if len(stop_ids) > 0:
                 self.vel_command_b[stop_ids, 2] = 0.0
 
@@ -212,15 +212,15 @@ class AmpVelocityCommand(CommandTerm):
             cmd_speed = torch.clip(
                 torch.norm(self.vel_command_b[env_ids, :2], dim=-1), min=1.0
             )
-            ang_vel_yaw_lower = ranges.ang_vel_yaw[0] / cmd_speed
-            ang_vel_yaw_upper = ranges.ang_vel_yaw[1] / cmd_speed
+            ang_vel_z_lower = ranges.ang_vel_z[0] / cmd_speed
+            ang_vel_z_upper = ranges.ang_vel_z[1] / cmd_speed
 
             self.vel_command_b[env_ids[update_mask], 2] = torch.clip(
                 self.cfg.tracking_strength * math_utils.wrap_to_pi(
                     self.vel_command_b[env_ids[update_mask], 3] - heading[env_ids[update_mask]]
                 ),
-                ang_vel_yaw_lower[update_mask],
-                ang_vel_yaw_upper[update_mask],
+                ang_vel_z_lower[update_mask],
+                ang_vel_z_upper[update_mask],
             )
             # Pure angular velocity envs
             pure_mask = self.pure_ang_vel_env_mask[env_ids]
@@ -231,15 +231,15 @@ class AmpVelocityCommand(CommandTerm):
             ranges = self.cfg.ranges
 
             cmd_speed = torch.clip(torch.norm(self.vel_command_b[:, :2], dim=-1), min=1.0)
-            ang_vel_yaw_lower = ranges.ang_vel_yaw[0] / cmd_speed
-            ang_vel_yaw_upper = ranges.ang_vel_yaw[1] / cmd_speed
+            ang_vel_z_lower = ranges.ang_vel_z[0] / cmd_speed
+            ang_vel_z_upper = ranges.ang_vel_z[1] / cmd_speed
 
             self.vel_command_b[update_mask, 2] = torch.clip(
                 self.cfg.tracking_strength * math_utils.wrap_to_pi(
                     self.vel_command_b[update_mask, 3] - heading[update_mask]
                 ),
-                ang_vel_yaw_lower[update_mask],
-                ang_vel_yaw_upper[update_mask],
+                ang_vel_z_lower[update_mask],
+                ang_vel_z_upper[update_mask],
             )
 
             # Pure angular velocity envs use raw_ang_vel directly
@@ -296,7 +296,7 @@ class AmpVelocityCommandCfg(CommandTermCfg):
         lin_vel_y: tuple[float, float] = MISSING
         """Range for linear-y velocity command (m/s)."""
 
-        ang_vel_yaw: tuple[float, float] = MISSING
+        ang_vel_z: tuple[float, float] = MISSING
         """Range for angular-yaw velocity command (rad/s)."""
 
         heading: tuple[float, float] | None = None

@@ -134,6 +134,8 @@ class DR02AmpFlatEnvCfg(AmpLocomotionEnvCfg):
         self.rewards.feet_distance.params["asset_cfg"] = feet_reward.copy()
         self.rewards.feet_slippage.params["contact_sensor_cfg"] = feet_sensor_reward.copy()
         self.rewards.feet_slippage.params["asset_cfg"] = feet_reward.copy()
+        self.rewards.feet_impact_vel.params["contact_sensor_cfg"] = feet_sensor_reward.copy()
+        self.rewards.foot_orientation.params["asset_cfg"] = feet_reward.copy()
 
         # Collision reward
         self.rewards.collision.params["contact_sensor_cfg"] = SceneEntityCfg(
