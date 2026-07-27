@@ -1,18 +1,3 @@
-# AMP observation functions for humanoid locomotion
-#
-# Individual observation terms for use with ObservationManager.
-# Noise, clip, scale, and history are handled by the ObservationManager
-# via ObsTerm configuration — these functions return raw or already-scaled
-# values and do NOT manage any buffers or indices themselves.
-#
-# Joint/body reordering is handled by SceneEntityCfg(joint_names=...,
-# preserve_order=True) in the ObsTerm params, which resolves joint_ids
-# and body_ids automatically when the manager initializes.
-#
-# Functions that apply internal scaling (joint_pos_action_scaled,
-# torques_normalized) accept scale values as parameters, set via
-# ObsTerm params in amp_env_cfg.py.
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -34,10 +19,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 def velocity_command(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
-    """Velocity command (first 3 dims: vx, vy, wz). Shape: (num_envs, 3).
-
-    Returns raw command — scale is applied via ``ObsTerm(scale=...)``.
-    """
+    """Velocity command (first 3 dims: vx, vy, wz). Shape: (num_envs, 3)."""
     cmd_term = env.command_manager.get_term(command_name)
     return cmd_term.command[:, :3]
 
@@ -49,7 +31,7 @@ def cmd_flag(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Joint observations (already-scaled — no ObsTerm scale needed)
+# Joint observations
 # ---------------------------------------------------------------------------
 
 def joint_pos_action_scaled(
@@ -62,25 +44,14 @@ def joint_pos_action_scaled(
     Shape: (num_envs, N).
 
     Returns already-scaled value ``(joint_pos - default) / action_scale``.
-    Used for policy obs where noise must match the original amplitude
-    (±0.0025) — if ObsTerm ``scale`` were used instead, the noise applied
-    before scale would be amplified by 1/action_scale.
-
     The per-joint scale vector is precomputed once at init by
     ``AmpHelperManager._init_coeff_vectors()`` and cached as
-    ``ahm.action_scale_vec``.  If the cached vector is not available
-    (e.g. manager not initialized), it falls back to per-call computation.
-
-    Args:
-        action_scale: The action scale used by JointPositionActionCfg.
-            Can be a float (uniform) or a dict of regex→float (per-joint).
-            Must match the action config's ``scale`` value.
+    ``ahm.action_scale_vec``.
     """
     robot = env.scene[asset_cfg.name]
     dof_pos = robot.data.joint_pos[:, asset_cfg.joint_ids]
 
     # Use randomized default from AmpHelperManager if available
-    # (matches AMPTrainEnv randomize_default_dof_pos=True)
     ahm = getattr(env, "amp_helper_manager", None)
     default_random = getattr(ahm, "default_dof_pos_random", None) if ahm is not None else None
     if default_random is not None:
@@ -94,7 +65,7 @@ def joint_pos_action_scaled(
     if scale_vec is not None:
         return rel_pos / scale_vec
 
-    # Fallback: compute on the fly (rare — only if manager not initialized)
+    # Fallback: compute on the fly
     if isinstance(action_scale, dict):
         joint_names = [robot.data.joint_names[i] for i in asset_cfg.joint_ids]
         index_list, _, value_list = string_utils.resolve_matching_names_values(
@@ -111,16 +82,7 @@ def torques_normalized(
     asset_cfg: SceneEntityCfg,
     torque_scale: float = 5.0,
 ) -> torch.Tensor:
-    """Applied torques normalized by effort limits and scaled.
-
-    Shape: (num_envs, N).
-
-    Returns already-scaled value ``torque / limit × torque_scale``.
-    Uses ``robot.data.joint_effort_limits`` (set from PhysX max forces).
-
-    Args:
-        torque_scale: Scale factor applied after normalization.
-    """
+    """Applied torques normalized by effort limits and scaled. Shape: (num_envs, N)."""
     robot = env.scene[asset_cfg.name]
     torques = robot.data.applied_torque[:, asset_cfg.joint_ids]
     limits = robot.data.joint_effort_limits[:, asset_cfg.joint_ids]
@@ -128,15 +90,11 @@ def torques_normalized(
 
 
 # ---------------------------------------------------------------------------
-# Foot / hand observations (raw — clip & scale via ObsTerm)
+# Foot / hand observations
 # ---------------------------------------------------------------------------
 
 def foot_contact_forces(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Foot contact forces in base frame. Shape: (num_envs, 3×N_feet).
-
-    Returns raw forces — clip and scale are applied via ``ObsTerm`` config
-    (e.g. ``clip=(-5000, 5000), scale=0.002``).
-    """
+    """Foot contact forces in base frame. Shape: (num_envs, 3×N_feet)."""
     robot = env.scene["robot"]
     contact_sensor = env.scene[sensor_cfg.name]
     base_quat = robot.data.root_quat_w
@@ -148,11 +106,7 @@ def foot_contact_forces(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> tor
 
 
 def foot_velocities(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Foot velocities in base frame. Shape: (num_envs, 3×N_feet).
-
-    Returns raw velocities — clip and scale are applied via ``ObsTerm``
-    config (e.g. ``clip=(-10, 10), scale=0.5``).
-    """
+    """Foot velocities in base frame. Shape: (num_envs, 3×N_feet)."""
     robot = env.scene[asset_cfg.name]
     base_quat = robot.data.root_quat_w
     vels = torch.cat([
@@ -163,14 +117,7 @@ def foot_velocities(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Te
 
 
 def body_pos_in_base_frame(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Body positions relative to base in body frame.
-
-    Shape: (num_envs, 3×N_bodies).
-
-    Returns raw positions — clip and scale are applied via ``ObsTerm``
-    config.  Used for both hand and foot positions (specified via
-    ``SceneEntityCfg(body_names=...)``).
-    """
+    """Body positions relative to base in body frame. Shape: (num_envs, 3×N_bodies)."""
     robot = env.scene[asset_cfg.name]
     base_quat = robot.data.root_quat_w
     root_pos = robot.data.root_pos_w
@@ -193,22 +140,7 @@ class AmpObsHistoryTerm(ManagerTermBase):
     Maintains a buffer of ``amp_num_frames * amp_history_stride`` consecutive
     frames, then subsamples with ``amp_history_stride`` to produce
     ``amp_num_frames`` frames that are temporally separated by
-    ``amp_history_stride`` simulation steps — matching the expert motion
-    dataset's ``time_between_frames = dt * amp_history_stride``.
-
-    This mirrors the original AMPTrainEnv implementation:
-
-    .. code-block:: python
-
-        amp_obs_history = torch.zeros(num_envs, num_frames * stride, obs_dim)
-        # each step: sliding window
-        amp_obs_history = cat(amp_obs_history[:, 1:, :], amp_obs.unsqueeze(1))
-        # stride subsample
-        amp_obs_history_buf = amp_obs_history[:, stride-1::stride, :]
-
-    The single-frame AMP observation consists of:
-    ``[projected_gravity(3), base_lin_vel(3), base_ang_vel(3),
-       joint_pos(N), joint_vel(N), hand_pos(3×N_h), foot_pos(3×N_f)]``
+    ``amp_history_stride`` simulation steps.
 
     Output shape: ``(num_envs, amp_num_frames * amp_obs_dim)`` (flattened).
     """
@@ -278,8 +210,7 @@ class AmpObsHistoryTerm(ManagerTermBase):
 
         # -- store 3D buffer on env for AMP reward access --
         # shape: (num_envs, amp_num_frames, amp_obs_dim)
-        # This mirrors the original AMPTrainEnv.amp_obs_history_buf.
-        # The reward function (amp_reward) reads this in the NEXT step,
+        # The reward function reads this in the NEXT step,
         # since observations are computed after rewards in step().
         self._env.amp_obs_history_buf = subsampled
 
@@ -289,16 +220,7 @@ class AmpObsHistoryTerm(ManagerTermBase):
         return subsampled
 
     def reset(self, env_ids: "Sequence[int] | None" = None) -> None:
-        """Fill the buffer with the initial AMP observation for reset envs.
-
-        Mirrors AMPTrainEnv._reset_idx lines 1239-1242:
-            amp_obs_buf[env_ids] = _amp_observaton_vector_assemble()[env_ids]
-            amp_obs_history[env_ids] = amp_obs_buf[env_ids].unsqueeze(1).repeat(
-                1, amp_num_frames * amp_history_stride, 1)
-
-        This ensures the sliding window starts with valid data after reset,
-        instead of zeros which would produce NaN in the discriminator.
-        """
+        """Fill the buffer with the initial AMP observation for reset envs."""
         if self._buffer is None or self._amp_joint_cfg is None:
             return
         if isinstance(env_ids, slice):

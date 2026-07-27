@@ -122,7 +122,7 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
 
 
 # ---------------------------------------------------------------------------
-# CR1 (DR02-STD) - Full humanoid robot with 21 DOF
+# DR02 (DR02-STD) - Full humanoid robot with 21 DOF
 # ---------------------------------------------------------------------------
 DR02_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(

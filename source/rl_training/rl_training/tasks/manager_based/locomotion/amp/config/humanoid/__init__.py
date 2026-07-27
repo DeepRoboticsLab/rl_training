@@ -1,2 +1,2 @@
 """Humanoid AMP configurations."""
-from . import cr1  # noqa: F401
+from . import dr02  # noqa: F401

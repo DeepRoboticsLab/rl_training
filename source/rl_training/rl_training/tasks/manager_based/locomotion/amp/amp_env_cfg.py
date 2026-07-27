@@ -1,7 +1,3 @@
-# AMP Locomotion Environment Configuration (generic base)
-# Migrated from IsaacLabExtension/exts/deeprobotics/deeprobotics/Env/cfg/cr1_amp_env_cfg.py
-# Adapted from DirectRLEnvCfg to ManagerBasedRLEnvCfg
-
 from __future__ import annotations
 
 from dataclasses import MISSING
@@ -28,19 +24,12 @@ import rl_training.tasks.manager_based.locomotion.amp.mdp as mdp
 
 
 ##
-# Observation scales (from cr1_amp_env_cfg.py normalization.obs_scales)
-# Centralized default values — each ObsTerm references these.
-# Override individual ObsTerm scales in robot-specific config if needed.
+# Observation scales
 ##
 
 
 class obs_scales:
-    """Default observation scale values.
-
-    These values are referenced by ObsTerm definitions below.
-    To customize for a specific robot, override the ObsTerm ``scale``
-    in the robot-specific config's ``__post_init__``.
-    """
+    """Default observation scale values."""
     lin_vel = 2.0
     ang_vel = 0.2
     dof_vel = 0.1
@@ -51,10 +40,10 @@ class obs_scales:
 
 AMP_NUM_FRAMES = 5
 AMP_HISTORY_STRIDE = 2
+OBS_HISTORY_LENGTH = 10
 
 ##
-# Generic SceneEntityCfg defaults (referenced by ObsTerms)
-# Override in robot-specific config (e.g. flat_env_cfg.py)
+# Generic SceneEntityCfg defaults
 ##
 
 _JOINT_CFG = SceneEntityCfg("robot")
@@ -71,7 +60,7 @@ _FEET_SENSOR_CFG = SceneEntityCfg("contact_sensor", body_names=".*ankle.*")
 
 @configclass
 class AmpSceneCfg(InteractiveSceneCfg):
-    """Scene configuraon for AMP flat-terrain training."""
+    """Scene for AMP flat-terrain training."""
 
     # ground terrain (flat plane)
     terrain = TerrainImporterCfg(
@@ -159,10 +148,6 @@ class AmpActionsCfg:
 @configclass
 class AmpObservationsCfg:
     """Observation specifications for the AMP MDP.
-
-    All observation groups use individual ObsTerms with
-    ``concatenate_terms=True``.  Noise, clip, scale, and history
-    are handled natively by the ObservationManager.
 
     Observation groups:
     - **policy** (73 dims): ``[ang_vel(3), proj_grav(3), cmd(3), cmd_flag(1),
@@ -289,23 +274,9 @@ class AmpObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
 
-    # NOTE: obs_history is NOT an ObservationManager group — it is
-    # maintained manually by AmpLocomotionEnv using the already-computed
-    # obs_buf["policy"] tensor (frame-by-frame layout, 10×73 = 730 dims).
-
     @configclass
     class AmpObsHistoryCfg(ObsGroup):
-        """AMP observation history group (305 dims = 5 × 61).
-
-        Uses a custom :class:`AmpObsHistoryTerm` (ManagerTermBase) that
-        maintains a 10-frame sliding window and subsamples with stride=2
-        to produce 5 frames — matching the expert motion dataset's
-        ``time_between_frames = dt × amp_history_stride``.
-
-        The term manages its own buffer internally, so no
-        ``history_length`` is set on the group (the ObservationManager's
-        built-in history mechanism is not used for this group).
-        """
+        """AMP observation history group (305 dims = 5 × 61)."""
 
         amp_obs_history = ObsTerm(
             func=mdp.AmpObsHistoryTerm,
@@ -367,26 +338,14 @@ class AmpObservationsCfg:
     vel: BaseVelCfg = BaseVelCfg()
 
 
-# ────────────────────────────────────────────────────────────────────
+##
 # Joint coefficient dictionaries (used by reward terms)
-# ────────────────────────────────────────────────────────────────────
-
-# Per-joint coefficient dictionaries are robot-specific.
-# Define them in robot-specific config (e.g. flat_env_cfg.py) and pass
-# via reward term params (torque_coeffs, action_coeffs, jerr_coeffs).
+##
 
 
 @configclass
 class AmpRewardsCfg:
-    """Reward terms for the AMP MDP.
-
-    Generic defaults — override in robot-specific config (e.g. flat_env_cfg.py)
-    with explicit joint names and per-joint coefficient dicts.
-    """
-
-    # Note: In the manager-based framework, ``only_positive_rewards`` is not
-    # a recognized field on RewardsCfg (it was specific to DirectRLEnv).
-    # Negative rewards are handled by their negative weights.
+    """Reward terms for the AMP MDP."""
 
     # ── Task rewards (Gaussian) ──────────────────────────────────
     lin_vel_tracking = RewTerm(
@@ -416,16 +375,6 @@ class AmpRewardsCfg:
         weight=0.25,
         params={"decay": 0.1},
     )
-    # orientation = RewTerm(
-    #     func=mdp.orientation,
-    #     weight=0.5,
-    #     params={"decay": 0.01},
-    # )
-    # ang_vel_xy = RewTerm(
-    #     func=mdp.ang_vel_xy,
-    #     weight=0.25,
-    #     params={"decay": 0.2},
-    # )
     # ── Gait rewards ─────────────────────────────────────────────
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
@@ -556,23 +505,13 @@ class AmpRewardsCfg:
         },
     )
 
-    # ── AMP reward (placeholder) ─────────────────────────────────
+    # AMP reward
     amp_reward = RewTerm(func=mdp.amp_reward, weight=0.5)
 
 
 @configclass
 class AmpEventCfg:
-    """Domain randomization events for AMP training.
-
-    Uses IsaacLab native ``mdp.randomize_rigid_body_mass`` and
-    ``mdp.randomize_rigid_body_com`` for mass/COM randomization,
-    custom ``push_robots`` / reset functions.
-    Override body names in robot-specific config (e.g. flat_env_cfg.py).
-    """
-
-    # Note: AmpHelperManager handles its own initialization
-    # (lazy init on first use) and reset (from AmpLocomotionEnv._reset_idx).
-    # No startup/reset events needed for reward compute helper state.
+    """Domain randomization events for AMP training."""
 
     # ── Startup: physics material ────────────────────────────────
     physics_material = EventTerm(
@@ -667,8 +606,6 @@ class AmpEventCfg:
     )
 
     # ── Interval: push robots ────────────────────────────────────
-    # Enabled/disabled dynamically by push_curriculum based on mean reward.
-    # Initial force/torque set to zero (disabled); curriculum enables when reward > threshold.
     push_robots = EventTerm(
         func=mdp.push_robots,
         mode="interval",
@@ -685,7 +622,6 @@ class AmpEventCfg:
 class AmpCurriculumCfg:
     """Curriculum terms for the AMP MDP."""
 
-    # Enable push_robots when mean episode reward exceeds threshold.
     push_curriculum = CurrTerm(
         func=mdp.push_curriculum,
         params={
@@ -701,7 +637,6 @@ class AmpCurriculumCfg:
 class AmpTerminationsCfg:
     """Termination terms for the AMP MDP."""
 
-    # IsaacLab default terminations (no custom overrides)
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     illegal_contact = DoneTerm(
@@ -714,7 +649,7 @@ class AmpTerminationsCfg:
 
     bad_orientation = DoneTerm(
         func=mdp.bad_orientation_pitch_roll,
-        params={"pitch_limit": 1.1, "roll_limit": 1.0},
+        params={"pitch_limit": 1.0, "roll_limit": 1.0},
     )
 
     base_height_too_low = DoneTerm(
@@ -730,11 +665,7 @@ class AmpTerminationsCfg:
 
 @configclass
 class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
-    """Base AMP locomotion environment configuration for humanoid robots.
-
-    Uses flat terrain (plane).  No height scanner, no curriculum.
-    Override robot-specific settings in child config (e.g. flat_env_cfg.py).
-    """
+    """Base AMP locomotion environment configuration."""
 
     # environment
     decimation = 4
@@ -773,11 +704,10 @@ class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
     terminations: AmpTerminationsCfg = AmpTerminationsCfg()
     events: AmpEventCfg = AmpEventCfg()
 
-    # curriculum: reward-gated push robots
+    # curriculum
     curriculum: AmpCurriculumCfg = AmpCurriculumCfg()
 
     def __post_init__(self):
-        """Post-initialization: update sensor periods and physics material."""
         self.decimation = 4
         self.episode_length_s = 20.0
         self.sim.dt = 0.005

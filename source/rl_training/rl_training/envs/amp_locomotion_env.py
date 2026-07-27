@@ -7,7 +7,7 @@
 #   1. Process actions
 #   2. Physics stepping (decimation loop)
 #   3. Update episode counters
-#   4. Update contact state (contact_filt, foot_contact_trams)
+#   4. Update contact state (contact, foot_contact_trajs)
 #   5. Post-physics callback (push robots, heights) -> interval events in manager-based
 #   6. Compute terminations
 #   7. Compute rewards (feet_air_time updated inside reward function)
@@ -92,7 +92,7 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
 
         1. ``amp_helper_manager.pre_reward_update()`` is called
            AFTER physics stepping and BEFORE termination/reward computation
-           (updates contact_filt and foot_contact_trams).
+           (updates contact and foot_contact_trajs).
         2. ``only_positive_rewards`` clips total reward to min=0 after
            reward computation (matches original AMPTrainEnv).
         3. ``amp_helper_manager.update_obs_history()`` is called
@@ -124,8 +124,7 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         self.episode_length_buf += 1
         self.common_step_counter += 1
 
-        # 4. Update AMP helper (contact_filt, foot_contact_trams)
-        #    Mirrors AMPTrainEnv.step() lines 728-735
+        # 4. Update AMP helper (contact, foot_contact_trajs)
         self.amp_helper_manager.pre_reward_update()
 
         # 5. Compute terminations
@@ -175,7 +174,6 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         self.amp_helper_manager.post_step_update()
         # Add time_outs to extras for PPO timeout bootstrapping (matches AMPTrainEnv)
         self.extras["time_outs"] = self.reset_time_outs
-        self.extras["episode"] = self.extras["log"]
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
 
     def _reset_idx(self, env_ids: Sequence[int]):
@@ -213,28 +211,8 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         self.amp_helper_manager.reset()
         return self.obs_buf, extras
 
-    def get_observations(self) -> tuple[dict, dict]:
-        """Return current observations and extras.
-
-        Called by AMPOnPolicyRunner.learn() at initialization and during training.
-        Returns ``(obs_dict, extras)`` where ``obs_dict`` is a mapping from
-        observation group name (e.g. ``"policy"``, ``"critic"``,
-        ``"obs_history"``, ``"amp_obs_history"``, ``"obs_future"``) to
-        the corresponding tensor.
-        """
-        return self.obs_buf, self.extras
-
-    # ------------------------------------------------------------------
-    # AMP discriminator setter (called by runner)
-    # ------------------------------------------------------------------
-
     def _set_amp_discriminator(self, amp_discriminator, amp_normalizer, amp_dataset):
-        """Set AMP discriminator, normalizer, and dataset references.
-
-        Called by AMPOnPolicyRunner after initializing these components.
-        The AMP dataset is stored on the env so that the ``reset_amp_reference``
-        EventTerm can access it via ``env.amp_dataset``.
-        """
+        """Set AMP discriminator, normalizer, and dataset references."""
         self.amp_discriminator = amp_discriminator
         self.amp_normalizer = amp_normalizer
         self.amp_dataset = amp_dataset

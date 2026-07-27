@@ -1,7 +1,3 @@
-# AMP Runner Configuration for CR1 humanoid
-# Migrated from IsaacLabExtension/exts/deeprobotics/deeprobotics/Env/cfg/cr1_amp_cfg.py
-# Adapted to configclass-based configuration compatible with to_dict() serialization
-
 from __future__ import annotations
 
 import glob
@@ -22,7 +18,6 @@ from rl_training.tasks.manager_based.locomotion.amp.amp_env_cfg import (
 )
 
 
-# Motion files for CR1-B2-STD (globbed from amp/datasets/amp_dataset_ik/)
 _AMP_DATASETS_DIR = os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "..", "datasets", "amp_dataset_ik"
 )
@@ -100,8 +95,7 @@ class AmpDatasetCfg:
 class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
     """Algorithm configuration for PPO_AMP.
 
-    Inherits standard PPO fields from RslRlPpoAlgorithmCfg and adds
-    AMP-specific sub-configs (discriminator, CE-Net, motion dataset).
+    Extends RslRlPpoAlgorithmCfg with AMP-specific sub-configs.
     """
 
     class_name: str = "rl_training.rsl_rl.algorithms:PPO_AMP"
@@ -118,16 +112,11 @@ class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 
 @configclass
-class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
-    """CR1-B2-STD AMP training configuration.
+class DR02AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
+    """DR02 AMP training configuration.
 
-    Uses AMPOnPolicyRunner (extends OnPolicyRunner) with PPO_AMP
-    as the algorithm. Actor and critic are separate MLPModel instances,
-    while CE-Net and AMP discriminator are standalone nn.Module classes
-    created inside PPO_AMP.construct_algorithm.
     """
 
-    # ---- Top-level runner fields (from RslRlBaseRunnerCfg) ----
     seed: int = int(time.time())
     device: str = "cuda:0"
     num_steps_per_env: int = 24
@@ -140,17 +129,16 @@ class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         }
     )
     save_interval: int = 500
-    experiment_name: str = "cr1_amp"
+    experiment_name: str = "dr02_amp"
     run_name: str = ""
     resume: bool = False
     load_run: str = ".*"
     load_checkpoint: str = "model_.*.pt"
     clip_actions: float = 10.0
 
-    # ---- Use AMPOnPolicyRunner (extends OnPolicyRunner with custom export) ----
     class_name: str = "rl_training.rsl_rl.runners:AMPOnPolicyRunner"
 
-    # ---- Actor model config (MLPModel with Gaussian distribution) ----
+    # Actor
     actor: RslRlMLPModelCfg = RslRlMLPModelCfg(
         class_name="MLPModel",
         hidden_dims=[1024, 256, 128],
@@ -162,7 +150,7 @@ class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         ),
     )
 
-    # ---- Critic model config (MLPModel, deterministic) ----
+    # Critic
     critic: RslRlMLPModelCfg = RslRlMLPModelCfg(
         class_name="MLPModel",
         hidden_dims=[1024, 512, 256, 128],
@@ -170,10 +158,9 @@ class CR1AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         obs_normalization=False,
     )
 
-    # ---- Algorithm config (PPO_AMP with AMP-specific params) ----
+    # Algorithm
     algorithm: AmpPpoAlgorithmCfg = AmpPpoAlgorithmCfg(
         class_name="rl_training.rsl_rl.algorithms:PPO_AMP",
-        # PPO params
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

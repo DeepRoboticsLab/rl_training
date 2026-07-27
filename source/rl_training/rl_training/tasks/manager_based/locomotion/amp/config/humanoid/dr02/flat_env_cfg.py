@@ -1,22 +1,13 @@
-# CR1 AMP Flat-Terrain Environment Configuration
-# Migrated from IsaacLabExtension cr1_amp_env_cfg.py (flat terrain mode)
-
 from __future__ import annotations
 
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from rl_training.assets.deeprobotics import DR02_AMP_DOF_ORDER, DR02_CFG, DR02_DOF_ORDER
-from rl_training.tasks.manager_based.locomotion.amp.amp_env_cfg import AmpLocomotionEnvCfg
+from rl_training.tasks.manager_based.locomotion.amp.amp_env_cfg import OBS_HISTORY_LENGTH, AmpLocomotionEnvCfg
 
 
-# ────────────────────────────────────────────────────────────────────
-# CR1-specific per-joint coefficient dictionaries
-# ────────────────────────────────────────────────────────────────────
-
-# Per-joint action scale (from cr1_amp_env_cfg.py action_scale dict)
-# Keys are regex patterns matched against joint names
-# Keys are regex patterns matched via re.fullmatch against joint names
+# Per-joint action scale
 _ACTION_SCALE = {
     ".*hip_y.*": 0.25, ".*hip_x.*": 0.25, ".*hip_z.*": 0.25, ".*knee.*": 0.25,
     ".*ankle_y.*": 0.5, ".*ankle_x.*": 0.25, ".*waist_z.*": 0.25,
@@ -24,9 +15,9 @@ _ACTION_SCALE = {
 }
 
 _JERR_COEFFS = {
-    "left_hip_y_joint": 0.0, "left_hip_x_joint": 2.0, "left_hip_z_joint": 0.0,
+    "left_hip_y_joint": 0.0, "left_hip_x_joint": 1.0, "left_hip_z_joint": 0.0,
     "left_knee_joint": 0.0, "left_ankle_y_joint": 0.0, "left_ankle_x_joint": 0.0,
-    "right_hip_y_joint": 0.0, "right_hip_x_joint": 2.0, "right_hip_z_joint": 0.0,
+    "right_hip_y_joint": 0.0, "right_hip_x_joint": 1.0, "right_hip_z_joint": 0.0,
     "right_knee_joint": 0.0, "right_ankle_y_joint": 0.0, "right_ankle_x_joint": 0.0,
     "waist_z_joint": 7.5,
     "left_shoulder_y_joint": 0.01, "left_shoulder_x_joint": 0.25,
@@ -53,21 +44,16 @@ _DOF_ACTION_COEFFS = {
     "right_hip_y_joint": 0.0, "right_hip_x_joint": 0.0, "right_hip_z_joint": 0.0,
     "right_knee_joint": 0.0, "right_ankle_y_joint": 0.0, "right_ankle_x_joint": 0.2,
     "waist_z_joint": 0.0,
-    "left_shoulder_y_joint": 0.0, "left_shoulder_x_joint": 0.0,
-    "left_shoulder_z_joint": 0.0, "left_elbow_joint": 0.0,
-    "right_shoulder_y_joint": 0.0, "right_shoulder_x_joint": 0.0,
-    "right_shoulder_z_joint": 0.0, "right_elbow_joint": 0.0,
+    "left_shoulder_y_joint": 0.02, "left_shoulder_x_joint": 0.0,
+    "left_shoulder_z_joint": 0.0, "left_elbow_joint": 0.01,
+    "right_shoulder_y_joint": 0.02, "right_shoulder_x_joint": 0.0,
+    "right_shoulder_z_joint": 0.0, "right_elbow_joint": 0.01,
 }
 
 
 @configclass
-class CR1AmpFlatEnvCfg(AmpLocomotionEnvCfg):
-    """CR1-B2-STD AMP flat-terrain training configuration.
-
-    Inherits from :class:`AmpLocomotionEnvCfg` (generic base) and overrides
-    with CR1-specific robot asset, joint/body configs, coefficient dicts,
-    and body name patterns.
-    """
+class DR02AmpFlatEnvCfg(AmpLocomotionEnvCfg):
+    """DR02 AMP flat-terrain training configuration."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -75,27 +61,28 @@ class CR1AmpFlatEnvCfg(AmpLocomotionEnvCfg):
         # ── Robot asset ──────────────────────────────────────────
         self.scene.robot = DR02_CFG.replace(prim_path="/World/envs/env_.*/Robot")
 
-        # ── Action scale (per-joint, CR1-specific) ───────────────
         # CRITICAL: joint_names must match DR02_DOF_ORDER so that action[i]
-        # corresponds to the same joint as observation[i].  The URDF joint
-        # order (waist→shoulders→arms→hips) differs from DR02_DOF_ORDER
-        # (hips→knees→ankles→waist→shoulders→arms), so using [".*"] would
-        # scramble the action-to-joint mapping.
+        # corresponds to the same joint as observation[i].
         self.actions.joint_pos.joint_names = list(DR02_DOF_ORDER)
         self.actions.joint_pos.scale = _ACTION_SCALE
 
-        # ── CR1-specific SceneEntityCfgs ─────────────────────────
+        # ── DR02-specific SceneEntityCfgs ─────────────────────────
         joint_cfg = SceneEntityCfg("robot", joint_names=list(DR02_DOF_ORDER), preserve_order=True)
         amp_joint_cfg = SceneEntityCfg("robot", joint_names=list(DR02_AMP_DOF_ORDER), preserve_order=True)
         feet_cfg = SceneEntityCfg("robot", body_names=".*ankle_x_link", preserve_order=True)
         hand_cfg = SceneEntityCfg("robot", body_names=".*hand_link", preserve_order=True)
         feet_sensor_cfg = SceneEntityCfg("contact_sensor", body_names=".*ankle_x_link", preserve_order=True)
 
-        # ── Observation overrides ────────────────────────────
+        # AmpHelperManager configuration
+        self.amp_helper.feet_cfg = feet_cfg.copy()
+        self.amp_helper.feet_contact_cfg = feet_sensor_cfg.copy()
+        self.amp_helper.torso_cfg = SceneEntityCfg("robot", body_names="body")
+        self.amp_helper.obs_history_length = OBS_HISTORY_LENGTH
+
+        # Observation overrides
         # Groups using _JOINT_CFG (all 21 joints in DR02 order)
         # Note: use .copy() for each assignment — the same SceneEntityCfg instance
-        # cannot be shared across terms because resolve() mutates body_ids/joint_ids
-        # and would raise a consistency error on the second resolve() call.
+        # cannot be shared across terms because resolve() mutates body_ids/joint_ids.
         for group_name in ("policy", "critic", "obs_future"):
             obs_group = getattr(self.observations, group_name)
             if hasattr(obs_group, "joint_pos"):
@@ -106,10 +93,7 @@ class CR1AmpFlatEnvCfg(AmpLocomotionEnvCfg):
             if hasattr(obs_group, "torques"):
                 obs_group.torques.params["asset_cfg"] = joint_cfg.copy()
 
-        # Note: obs_history is NOT an ObservationManager group — it is
-        # maintained manually by AmpLocomotionEnv using obs_buf["policy"].
-
-        # amp_obs_history uses a single custom AmpObsHistoryTerm
+        # amp_obs_history
         amp_hist_group = self.observations.amp_obs_history
         amp_hist_group.amp_obs_history.params["amp_joint_cfg"] = amp_joint_cfg.copy()
         amp_hist_group.amp_obs_history.params["hand_cfg"] = hand_cfg.copy()
@@ -127,7 +111,7 @@ class CR1AmpFlatEnvCfg(AmpLocomotionEnvCfg):
             if hasattr(obs_group, "foot_vel"):
                 obs_group.foot_vel.params["asset_cfg"] = feet_cfg.copy()
 
-        # ── Reward overrides ──────────────────────────────────────
+        # Reward overrides
         # Joint-based rewards with DR02 joint order
         for term_name in (
             "dof_pos_limits", "dof_vel_limits", "dof_torque_limits",
@@ -151,36 +135,36 @@ class CR1AmpFlatEnvCfg(AmpLocomotionEnvCfg):
         self.rewards.feet_slippage.params["contact_sensor_cfg"] = feet_sensor_reward.copy()
         self.rewards.feet_slippage.params["asset_cfg"] = feet_reward.copy()
 
-        # Collision reward (penalize hand/wrist contacts, mirrors AMPTrainEnv)
+        # Collision reward
         self.rewards.collision.params["contact_sensor_cfg"] = SceneEntityCfg(
             "contact_sensor", body_names=".*hand_link|.*wrist_*_link",
         )
 
-        # hipz_deviation (CR1 hip_z joint names)
+        # hipz_deviation
         self.rewards.hipz_deviation.params["asset_cfg"] = SceneEntityCfg(
             "robot", joint_names=["left_hip_z_joint", "right_hip_z_joint"],
         )
 
-        # ── Event overrides (CR1 body names) ─────────────────────
+        # Event overrides (DR02 body names)
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
         self.events.add_torso_mass.params["asset_cfg"].body_names = "body"
         self.events.random_link_mass.params["asset_cfg"].body_names = "^(?!.*(base_link|body)).*$"
         self.events.random_base_com.params["asset_cfg"].body_names = "base_link"
         self.events.random_torso_com.params["asset_cfg"].body_names = "body"
         self.events.random_link_com.params["asset_cfg"].body_names = "^(?!.*(base_link|body)).*$"
-        # reset_dof_pos may be commented out in base config (testing without randomization)
+        # reset_dof_pos may be commented out in base config
         if hasattr(self.events, "reset_dof_pos") and self.events.reset_dof_pos is not None:
             self.events.reset_dof_pos.params["asset_cfg"] = joint_cfg
         if hasattr(self.events, "reset_root_state") and self.events.reset_root_state is not None:
             self.events.reset_root_state.params["pose_range"] = {"x": (-1.5, 1.5), "y": (-1.5, 1.5)}
-        # AMP reference: set CR1-specific AMP DOF joints
+        # AMP reference
         if hasattr(self.events, "reset_amp_reference") and self.events.reset_amp_reference is not None:
             self.events.reset_amp_reference.params["amp_dof_cfg"] = amp_joint_cfg
         # self.events.push_robots.params["asset_cfg"].body_names = "base_link"
 
-        # ── Termination overrides (CR1 body names) ───────────────
+        # Termination overrides (DR02 body names)
         self.terminations.illegal_contact.params["sensor_cfg"].body_names = ["base_link"]
 
-        # ── Flat terrain ──────────────────────────────────────────
+        # Flat terrain
         self.scene.terrain.terrain_type = "plane"
         self.disable_zero_weight_rewards()

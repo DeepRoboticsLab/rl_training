@@ -6,7 +6,7 @@
 #
 # The manager exposes three update hooks:
 #   - pre_reward_update():       Called AFTER physics stepping, BEFORE termination/reward.
-#                                Updates contact_filt and foot_contact_trams.
+#                                Updates contact and foot_contact_trams.
 #   - update_obs_history():      Called AFTER observations are computed.
 #                                Maintains obs_history buffer using obs_buf["policy"].
 #   - post_step_update():        Called AFTER obs_history update (end of step).
@@ -19,20 +19,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 import torch
 
 import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
-from isaaclab.managers import ManagerBase
+from isaaclab.managers import ManagerBase, SceneEntityCfg
 from isaaclab.utils import configclass
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-
-# Number of policy observation history frames (matches AMPTrainEnv)
-_OBS_HISTORY_LENGTH = 10
 
 
 class AmpHelperManager(ManagerBase):
@@ -42,7 +40,7 @@ class AmpHelperManager(ManagerBase):
     runner:
 
     **Reward state buffers:**
-    - **contact_filt**: Boolean contact state for feet (num_envs, num_feet)
+    - **contact**: Boolean contact state for feet (num_envs, num_feet)
     - **feet_air_time**: Air time accumulator for feet (num_envs, num_feet)
     - **foot_contact_trajs**: Boolean contact trajectory history (num_envs, num_feet, traj_len)
     - **last_actions**: Previous step's actions (num_envs, num_actions)
@@ -53,8 +51,8 @@ class AmpHelperManager(ManagerBase):
     **Observation history buffer:**
     - **_obs_history_buf**: Policy observation history (num_envs, history_length, policy_obs_dim)
       Maintained by ``update_obs_history()`` using the already-computed
-      ``obs_buf["policy"]`` tensor (frame-by-frame layout, 10×73 = 730 dims).
-      Written into ``obs_buf["obs_history"]`` as a flattened tensor.
+      ``obs_buf["policy"]`` tensor. Written into ``obs_buf["obs_history"]``
+      as a flattened tensor.
 
     Body indices (resolved lazily on first use):
     - **r_feet_ids**: Robot body indices for feet (ankle_x_link)
@@ -71,12 +69,14 @@ class AmpHelperManager(ManagerBase):
 
     def __init__(self, cfg, env: "ManagerBasedEnv"):
         super().__init__(cfg, env)
-        robot = self._env.scene["robot"]
-        contact_sensor = self._env.scene["contact_sensor"]
 
-        self.r_feet_ids, _ = robot.find_bodies(".*ankle_x_link", preserve_order=True)
-        self.c_feet_ids, _ = contact_sensor.find_bodies(".*ankle_x_link", preserve_order=True)
-        self.r_torso_ids, _ = robot.find_bodies("body")
+        self.cfg.feet_cfg.resolve(self._env.scene)
+        self.cfg.feet_contact_cfg.resolve(self._env.scene)
+        self.cfg.torso_cfg.resolve(self._env.scene)
+
+        self.r_feet_ids = self.cfg.feet_cfg.body_ids
+        self.c_feet_ids = self.cfg.feet_contact_cfg.body_ids
+        self.r_torso_ids = self.cfg.torso_cfg.body_ids
 
         # Pre-init coefficient vectors to None so that observation functions
         # can safely check getattr(ahm, 'action_scale_vec', None) during
@@ -94,18 +94,6 @@ class AmpHelperManager(ManagerBase):
     def _prepare_terms(self):
         pass  # No terms — this manager only holds state buffers
 
-    # ------------------------------------------------------------------
-    # Lazy initialization (called on first use when scene is ready)
-    # ------------------------------------------------------------------
-
-    # def _ensure_initialized(self):
-    #     if self._initialized:
-    #         return
-
-
-    #     self._init_buffers()
-    #     self._initialized = True
-
     def _init_buffers(self):
         num_envs = self.num_envs
         device = self.device
@@ -113,29 +101,26 @@ class AmpHelperManager(ManagerBase):
         num_actions = self._env.action_manager.total_action_dim
         traj_len = round(0.2 / self._env.step_dt)  # foot_contact_window = 0.2s
         robot = self._env.scene["robot"]
+        policy_obs_dim = self._env.observation_manager.group_obs_dim["policy"][0]
 
-        self.contact_filt = torch.zeros(num_envs, num_feet, dtype=torch.bool, device=device)
+        self.contact = torch.zeros(num_envs, num_feet, dtype=torch.bool, device=device)
         self.feet_air_time = torch.zeros(num_envs, num_feet, dtype=torch.float, device=device)
         self.foot_contact_trajs = torch.zeros(num_envs, num_feet, traj_len, dtype=torch.bool, device=device)
         self.last_actions = torch.zeros(num_envs, num_actions, dtype=torch.float, device=device)
         self.last_last_actions = torch.zeros(num_envs, num_actions, dtype=torch.float, device=device)
         self.last_dof_vel = torch.zeros(num_envs, robot.num_joints, dtype=torch.float, device=device)
         self.last_foot_velocities = torch.zeros(num_envs, num_feet, 3, dtype=torch.float, device=device)
-        self._obs_history_buf = torch.zeros(self.num_envs, _OBS_HISTORY_LENGTH, 73, device=self.device, dtype=torch.float)
+        self._obs_history_buf = torch.zeros(
+            self.num_envs, self.cfg.obs_history_length, policy_obs_dim,
+            device=self.device, dtype=torch.float,
+        )
 
-        # randomize_default_dof_pos: per-env randomized default joint positions
-        # used as action offset, observation normalization, and dof_err reward
-        # baseline.  Mirrors AMPTrainEnv._init_buffers() lines 289-293:
-        #   default_dof_pos_random = default_joint_pos + uniform(-0.01, 0.01)
+        # default_dof_pos_random = default_joint_pos + uniform(-0.01, 0.01)
         num_joints = robot.num_joints
         self.default_dof_pos_random = robot.data.default_joint_pos.clone() + (
             torch.rand(num_envs, num_joints, device=device, dtype=torch.float) * 2.0 - 1.0
         ) * 0.01  # range [-0.01, 0.01]
 
-        # Override the JointPositionAction term's offset with the randomized
-        # version so that ``processed_action = raw_action * scale + offset``
-        # uses per-env randomized defaults.  The action term stores its offset
-        # as ``_offset`` (shape: num_envs, num_joints_in_term).
         try:
             joint_pos_term = self._env.action_manager.get_term("joint_pos")
             joint_ids = joint_pos_term._joint_ids
@@ -247,24 +232,13 @@ class AmpHelperManager(ManagerBase):
     # ------------------------------------------------------------------
 
     def pre_reward_update(self):
-        """Update contact state — called AFTER physics stepping, BEFORE terminations/rewards.
-
-        Mirrors AMPTrainEnv.step() lines 728-735:
-            contact = norm(net_forces_w[:, c_feet_ids]) > threshold
-            contact_filt = contact
-            foot_contact_trajs = cat(contact, foot_contact_trajs[..., :-1])
-
-        Note: feet_air_time is NOT updated here — it is updated inside the
-        feet_air_time reward function to match the original execution order.
-        """
-        # self._ensure_initialized()
+        """Update contact state — called AFTER physics stepping, BEFORE terminations/rewards."""
         contact_sensor = self._env.scene["contact_sensor"]
-        contact = torch.norm(
+        self.contact = torch.norm(
             contact_sensor.data.net_forces_w[:, self.c_feet_ids], dim=-1
         ) > contact_sensor.cfg.force_threshold
-        self.contact_filt = contact
         self.foot_contact_trajs = torch.cat(
-            (contact.unsqueeze(-1), self.foot_contact_trajs[..., :-1]), dim=-1
+            (self.contact.unsqueeze(-1), self.foot_contact_trajs[..., :-1]), dim=-1
         )
 
     def update_obs_history(self):
@@ -301,25 +275,14 @@ class AmpHelperManager(ManagerBase):
     # ------------------------------------------------------------------
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
-        """Reset AMP helper state buffers for the given environments.
-
-        Mirrors AMPTrainEnv._reset_idx() lines 1222-1236:
-            contact = norm(net_forces_w[env_ids][:, c_feet_ids]) > threshold
-            contact_filt[env_ids] = contact
-            foot_contact_trajs[env_ids] = 0
-            feet_air_time[env_ids] = 0
-            last_actions[env_ids] = 0
-            last_last_actions[env_ids] = 0
-
-        """
+        """Reset AMP helper state buffers for the given environments."""
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
 
         contact_sensor = self._env.scene["contact_sensor"]
-        contact = torch.norm(
+        self.contact[env_ids] = torch.norm(
             contact_sensor.data.net_forces_w[env_ids][:, self.c_feet_ids], dim=-1
         ) > contact_sensor.cfg.force_threshold
-        self.contact_filt[env_ids] = contact
         self.feet_air_time[env_ids] = 0.0
         self.foot_contact_trajs[env_ids] = 0
         self.last_actions[env_ids] = 0.0
@@ -350,5 +313,9 @@ class AmpHelperManager(ManagerBase):
 
 @configclass
 class AmpHelperCfg:
-    """Configuration for AmpHelperManager (no parameters needed)."""
-    pass
+    """Configuration for AmpHelperManager."""
+
+    feet_cfg: SceneEntityCfg = MISSING
+    feet_contact_cfg: SceneEntityCfg = MISSING
+    torso_cfg: SceneEntityCfg = MISSING
+    obs_history_length: int = MISSING

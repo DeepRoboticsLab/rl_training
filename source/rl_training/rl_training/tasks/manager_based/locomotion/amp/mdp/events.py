@@ -1,15 +1,3 @@
-# AMP event functions for the manager-based framework.
-#
-# Migrated from:
-#   - IsaacLabExtension/exts/deeprobotics/deeprobotics/Env/utils/functions.py
-#       (randomize_rigid_body_mass)
-#   - IsaacLabExtension/exts/deeprobotics/deeprobotics/Env/AMPTrainEnv.py
-#       (_push_robots, _check_push_finish, _reset_dofs, _reset_root_states,
-#        _reset_idx buffer reset logic)
-#
-# Note: ``randomize_rigid_body_mass`` and ``randomize_rigid_body_com`` are
-# re-exported from IsaacLab's native mdp module.
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
@@ -38,16 +26,7 @@ def push_robots(
     force_range: tuple[float, float, float] = (200.0, 100.0, 50.0),
     torque_range: tuple[float, float, float] = (25.0, 50.0, 25.0),
 ):
-    """Apply random external forces and torques to the robot's base link.
-
-    Adapted from ``AMPTrainEnv._push_robots``.  In the manager-based
-    framework this is called as an ``interval`` event (every
-    ``interval_range_s`` seconds).  The force/torque is applied to the base
-    body and persists until the next call or a reset.
-
-    The force and torque are sampled as 1-D random values (per axis) in the
-    base frame and rotated to the world frame via ``quat_apply``.
-    """
+    """Apply random external forces and torques to the robot's base link."""
     asset: Articulation = env.scene[asset_cfg.name]
 
     if env_ids is None:
@@ -91,15 +70,7 @@ def reset_dof_pos_randomized(
     vel_range: tuple[float, float] = (0.0, 0.0),
     randomize: bool = True,
 ):
-    """Reset DOF positions and velocities with optional randomization.
-
-    Adapted from ``AMPTrainEnv._reset_dofs``:
-    - If ``randomize`` is True, the default joint positions are scaled by a
-      random factor sampled from ``pos_range`` and then biased by a random
-      offset sampled from ``pos_offset``.
-    - The result is clamped to 95 % of the joint position limits.
-    - Joint velocities are set to zero (or sampled from ``vel_range``).
-    """
+    """Reset DOF positions and velocities with optional randomization."""
     asset: Articulation = env.scene[asset_cfg.name]
 
     if len(env_ids) == 0:
@@ -148,23 +119,7 @@ def reset_root_state_randomized(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     randomize: bool = True,
 ):
-    """Reset the robot root state (position + orientation + velocity) with randomization.
-
-    Adapted from ``AMPTrainEnv._reset_root_states``:
-    - Root position is set to the default + env_origins + random xy offset.
-    - Root orientation uses the default (no random rotation on flat terrain).
-    - If ``randomize`` is True, base linear/angular velocities are sampled
-      from the specific ranges used by the original AMP config.
-    - If ``randomize`` is False, velocities are zeroed.
-
-    Args:
-        pose_range: Optional dict with keys ``"x"`` and ``"y"`` for xy
-            position randomization.  Defaults to ``(-1.5, 1.5)`` on both axes.
-        velocity_range: Optional dict with velocity ranges.  When provided,
-            the keys ``"x"``, ``"y"``, ``"z"``, ``"roll"``, ``"pitch"``,
-            ``"yaw"`` are used.  Defaults to the AMP-specific values.
-        randomize: Whether to randomize the initial velocities.
-    """
+    """Reset the robot root state (position + orientation + velocity) with randomization."""
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
 
     if len(env_ids) == 0:
@@ -225,28 +180,7 @@ def reset_amp_reference(
     amp_dof_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     pose_range: tuple[float, float] = (-1.5, 1.5),
 ):
-    """Reset robot state from AMP reference motion data (subset of envs).
-
-    Mirrors ``AMPTrainEnv._reset_dofs_amp`` + ``_reset_root_states_amp``.
-
-    This event must be placed **after** ``reset_root_state_randomized`` and
-    ``reset_dof_pos_randomized`` in the event config so that it overrides
-    the default/randomized initial state for the sampled subset.
-
-    The function samples a fraction of ``env_ids`` (controlled by
-    ``sampling_probability``) and sets their DOF positions/velocities and
-    root state (position, orientation, linear/angular velocity) from the
-    AMP reference dataset.
-
-    Args:
-        sampling_probability: Probability that a given env uses AMP reference
-            data instead of the default randomized reset.
-        asset_cfg: Robot articulation to reset.
-        amp_dof_cfg: SceneEntityCfg whose ``joint_names`` specify the AMP-relevant
-            joints (e.g. legs, excluding waist). If empty, all joints are used.
-        pose_range: XY position randomization range applied on top of the
-            AMP reference root position.
-    """
+    """Reset robot state from AMP reference motion data (subset of envs)."""
     # Access the AMP dataset (set by runner via env.amp_dataset)
     amp_dataset = getattr(env, "amp_dataset", None)
     if amp_dataset is None:
@@ -282,8 +216,7 @@ def reset_amp_reference(
         env._amp_dof_indices_resolved = indices
     amp_indices = env._amp_dof_indices_resolved
 
-    # Use randomized default dof pos if available (matches AMPTrainEnv
-    # _reset_dofs_amp with randomize_default_dof_pos=True)
+    # Use randomized default dof pos if available
     ahm = getattr(env, "amp_helper_manager", None)
     default_random = getattr(ahm, "default_dof_pos_random", None) if ahm is not None else None
     if default_random is not None:
@@ -301,7 +234,7 @@ def reset_amp_reference(
     root_pos[:, :2] = 0
     root_pos = root_pos + env.scene.env_origins[amp_env_ids]
 
-    # xy position randomization (mirrors AMPTrainEnv._reset_root_states_amp)
+    # xy position randomization
     n = len(amp_env_ids)
     root_pos[:, 0] += torch.rand(n, device=env.device) * (pose_range[1] - pose_range[0]) + pose_range[0]
     root_pos[:, 1] += torch.rand(n, device=env.device) * (pose_range[1] - pose_range[0]) + pose_range[0]

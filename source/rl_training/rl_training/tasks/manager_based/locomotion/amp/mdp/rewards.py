@@ -1,14 +1,3 @@
-# AMP reward functions for humanoid locomotion
-# Migrated from AMPTrainEnv.py _reward_* methods
-#
-# All reward state buffers (contact_filt, feet_air_time, foot_contact_trajs,
-# last_actions, last_last_actions) are managed by AmpHelperManager,
-# accessed via env.amp_helper_manager.
-#
-# The manager's lifecycle hooks ensure correct execution order:
-#   - pre_reward_update() is called BEFORE reward computation (contact state)
-#   - post_step_update() is called AFTER everything (action history)
-
 from __future__ import annotations
 
 import torch
@@ -26,10 +15,7 @@ def _ahm(env: ManagerBasedEnv):
 # Task rewards (Gaussian: weight * exp(-error / decay))
 # ---------------------------------------------------------------------------
 def lin_vel_tracking(env: ManagerBasedEnv, command_name: str, decay: float = 0.3) -> torch.Tensor:
-    """Linear velocity tracking reward (Gaussian).
-
-    0.65 * base_vel + 0.35 * torso_vel, then exp(-sum(square(cmd - vel)) / decay).
-    """
+    """Linear velocity tracking reward (Gaussian)."""
     ahm = _ahm(env)
     robot = env.scene["robot"]
     cmd_term = env.command_manager.get_term(command_name)
@@ -58,42 +44,26 @@ def base_height(env: ManagerBasedEnv, target_height: float, decay: float = 0.02)
 
 
 def orientation(env: ManagerBasedEnv) -> torch.Tensor:
-    """Orientation penalty (linear). Penalizes non-flat base.
-
-    Returns positive value; use NEGATIVE reward weight.
-    Mirrors AMPTrainEnv._reward_orientation().
-    """
+    """Orientation penalty (linear). Returns positive value; use negative weight."""
     robot = env.scene["robot"]
     return torch.sum(torch.square(robot.data.projected_gravity_b[:, :2]), dim=1)
 
 
 def orientation_gaussian(env: ManagerBasedEnv, decay: float = 0.02) -> torch.Tensor:
-    """Orientation reward (Gaussian). Positive reward for flat base.
-
-    Mirrors GaussianRewardParam(weight=0.5, sigma=0.0075).
-    Use POSITIVE reward weight.
-    """
+    """Orientation reward (Gaussian). Use positive weight."""
     robot = env.scene["robot"]
     error = torch.sum(torch.square(robot.data.projected_gravity_b[:, :2]), dim=1)
     return torch.exp(-error / decay)
 
 
 def ang_vel_xy(env: ManagerBasedEnv) -> torch.Tensor:
-    """Angular velocity XY penalty (linear).
-
-    Returns positive value; use NEGATIVE reward weight.
-    Mirrors AMPTrainEnv._reward_ang_vel_xy().
-    """
+    """Angular velocity XY penalty (linear). Returns positive value; use negative weight."""
     robot = env.scene["robot"]
     return torch.sum(torch.square(robot.data.root_ang_vel_b[:, :2]), dim=1)
 
 
 def ang_vel_xy_gaussian(env: ManagerBasedEnv, decay: float = 0.02) -> torch.Tensor:
-    """Angular velocity XY reward (Gaussian). Positive reward for low angular velocity.
-
-    Mirrors GaussianRewardParam(weight=0.25, sigma=0.1).
-    Use POSITIVE reward weight.
-    """
+    """Angular velocity XY reward (Gaussian). Use positive weight."""
     robot = env.scene["robot"]
     error = torch.sum(torch.square(robot.data.root_ang_vel_b[:, :2]), dim=1)
     return torch.exp(-error / decay)
@@ -103,20 +73,12 @@ def ang_vel_xy_gaussian(env: ManagerBasedEnv, decay: float = 0.02) -> torch.Tens
 # Gait rewards
 # ---------------------------------------------------------------------------
 def feet_air_time(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Reward long steps with dynamic target. Returns positive value (use negative weight).
-
-    Mirrors AMPTrainEnv._reward_feet_air_time():
-      1. first_contact = (feet_air_time > 0) * contact_filt  (before increment)
-      2. feet_air_time += step_dt                             (increment)
-      3. Dynamic target: 0.22~0.36s based on command speed
-      4. reward = sum(clip(target - air_time) / target * first_contact)
-      5. feet_air_time *= ~contact_filt                       (reset on contact)
-    """
+    """Reward long steps with dynamic target. Returns positive value (use negative weight)."""
     ahm = _ahm(env)
     cmd_term = env.command_manager.get_term("base_velocity")
-    first_contact = (ahm.feet_air_time > 0.0) * ahm.contact_filt
+    first_contact = (ahm.feet_air_time > 0.0) * ahm.contact
     ahm.feet_air_time += env.step_dt
-    
+
     # Dynamic target: 0.36s at zero cmd, 0.22s at max cmd
     cmd_speed = torch.norm(cmd_term.command[:, :2], dim=1)
     yaw_speed = torch.abs(cmd_term.command[:, 2])
@@ -127,7 +89,7 @@ def feet_air_time(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg) -> t
     cmd_level = torch.max(speed_norm, yaw_norm)
     target = (0.36 - cmd_level * (0.36 - 0.22)).unsqueeze(1)
     reward = torch.sum(torch.clip(target - ahm.feet_air_time, min=0.0) / target * first_contact, dim=1)
-    ahm.feet_air_time *= ~ahm.contact_filt
+    ahm.feet_air_time *= ~ahm.contact
     return reward
 
 
@@ -159,12 +121,12 @@ def feet_distance(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, target_distan
 
 
 def feet_slippage(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Penalize feet horizontal velocity when in contact. Returns positive (use negative weight)."""
+    """Penalize feet horizontal velocity when in contact."""
     ahm = _ahm(env)
     robot = env.scene[asset_cfg.name]
     foot_vel_xy = robot.data.body_lin_vel_w[:, ahm.r_feet_ids, :2]
     slip_speed = torch.norm(foot_vel_xy, dim=-1)
-    return torch.sum(torch.square(slip_speed) * ahm.contact_filt.float(), dim=1)
+    return torch.sum(torch.square(slip_speed) * ahm.contact.float(), dim=1)
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +261,6 @@ def dof_err(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, jerr_coeffs: dict |
     indices = asset_cfg.joint_ids
 
     # Use randomized default from AmpHelperManager if available
-    # (matches AMPTrainEnv randomize_default_dof_pos=True)
     ahm = _ahm(env)
     default_random = getattr(ahm, "default_dof_pos_random", None)
     if default_random is not None:
@@ -328,12 +289,7 @@ def stand_still(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEntityC
 
 
 def collision(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
-    """Penalize undesired contacts on specified bodies.
-
-    Uses ``contact_sensor_cfg.body_ids`` to determine which bodies to
-    penalize.  In the original AMPTrainEnv, this was ``.*hand_link|.*wrist_*_link``;
-    in the CR1 config it is overridden via ``contact_sensor_cfg.body_names``.
-    """
+    """Penalize undesired contacts on specified bodies."""
     contact_sensor = env.scene[contact_sensor_cfg.name]
     penalize_ids = contact_sensor_cfg.body_ids
     net_contact_forces = contact_sensor.data.net_forces_w
@@ -345,27 +301,15 @@ def collision(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg, threshol
 # Foot impact and orientation rewards
 # ---------------------------------------------------------------------------
 def feet_impact_vel(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Penalize feet downward velocity at landing.
-
-    Uses last_foot_velocities z-component (negative = downward).
-    Only penalizes when foot is in contact.
-    Returns positive value; use NEGATIVE reward weight.
-    Mirrors AMPTrainEnv._reward_feet_impact_vel().
-    """
+    """Penalize feet downward velocity at landing. Returns positive; use negative weight."""
     ahm = _ahm(env)
     prev_foot_vel_z = ahm.last_foot_velocities[:, :, 2]  # (num_envs, num_feet)
     downward_vel = torch.clamp(prev_foot_vel_z, max=0.0)  # negative or zero
-    return torch.sum(ahm.contact_filt.float() * torch.square(downward_vel), dim=1)
+    return torch.sum(ahm.contact.float() * torch.square(downward_vel), dim=1)
 
 
 def foot_orientation(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"])) -> torch.Tensor:
-    """Penalize feet x-axis misalignment with torso x-axis (yaw direction).
-
-    Computes the forward (x-axis) direction of base and each foot in world frame,
-    projects onto horizontal plane, and penalizes angular deviation.
-    Returns positive value; use NEGATIVE reward weight.
-    Mirrors AMPTrainEnv._reward_foot_orientation().
-    """
+    """Penalize feet x-axis misalignment with torso x-axis. Returns positive; use negative weight."""
     ahm = _ahm(env)
     robot = env.scene[asset_cfg.name]
     cmd_term = env.command_manager.get_term(command_name)
@@ -396,16 +340,7 @@ def foot_orientation(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEn
 # AMP reward (discriminator)
 # ---------------------------------------------------------------------------
 def amp_reward(env: ManagerBasedEnv) -> torch.Tensor:
-    """AMP discriminator reward.
-
-    Mirrors ``AMPTrainEnv._reward_amp()``.  Uses ``env.amp_obs_history_buf``
-    (3D: num_envs × num_frames × obs_dim) maintained by ``AmpObsHistoryTerm``
-    in the observation manager, and ``env.amp_discriminator`` /
-    ``env.amp_normalizer`` set by the runner via ``_set_amp_discriminator()``.
-
-    Returns zeros if the discriminator or AMP obs history is not yet available
-    (e.g. before the runner initializes them).
-    """
+    """AMP discriminator reward."""
     amp_disc = getattr(env, "amp_discriminator", None)
     amp_norm = getattr(env, "amp_normalizer", None)
     amp_obs_buf = getattr(env, "amp_obs_history_buf", None)

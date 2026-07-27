@@ -1,14 +1,3 @@
-# AMP velocity command generator for CR1 humanoid
-# Migrated from AMPTrainEnv.py command logic (_resample_commands, _halfway_resample_commands, _update_vel_commands)
-#
-# Key differences from IsaacLab's default CommandTerm.compute() flow:
-# 1. cmd_flag is computed AFTER _update_command (not before), matching AMPTrainEnv
-#    where cmd_flag is set in _get_observations() after all command updates.
-# 2. reset() calls _update_command(env_ids) after _resample(), matching AMPTrainEnv._reset_idx
-#    which calls both _resample_commands(env_ids) and _update_vel_commands(env_ids).
-# 3. is_halfway_resample flag distinguishes halfway resample (keep moving) from
-#    reset resample (more likely to stop), matching AMPTrainEnv._resample_commands.
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -32,7 +21,7 @@ class AmpVelocityCommand(CommandTerm):
 
     Command has 5 dimensions: [lin_vel_x, lin_vel_y, ang_vel_yaw, heading, raw_ang_vel_yaw].
 
-    Features migrated from AMPTrainEnv.py:
+    Features:
     - Heading-based angular velocity control with tracking_strength
     - Zero command rate (randomly zero commands)
     - Pure angular velocity envs (15% of envs use raw ang_vel directly)
@@ -41,9 +30,6 @@ class AmpVelocityCommand(CommandTerm):
     - Small command thresholding
     - cmd_flag binary indicator (non-zero command)
     - is_halfway_resample flag (halfway vs reset resample context)
-
-    The ``cmd_flag`` property is used by observation functions to indicate
-    whether the current command is non-zero.
     """
 
     cfg: "AmpVelocityCommandCfg"
@@ -113,17 +99,7 @@ class AmpVelocityCommand(CommandTerm):
         )
 
     def compute(self, dt: float):
-        """Override CommandTerm.compute() to match AMPTrainEnv order.
-
-        Original AMPTrainEnv.step() lines 746-747:
-            _halfway_resample_commands()  → resample timed envs (is_halfway=True)
-            _update_vel_commands()         → update ALL envs (with in-place turning)
-
-        Then _get_observations() (line 753) computes cmd_flag AFTER all updates.
-
-        Unlike the parent class which calls _update_metrics() FIRST, we call it
-        LAST (after _update_command) so cmd_flag reflects the final command state.
-        """
+        """Compute cmd_flag and error metrics after all command updates."""
         # Reduce time left
         self.time_left -= dt
 
@@ -140,15 +116,7 @@ class AmpVelocityCommand(CommandTerm):
         self._update_metrics()
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
-        """Override CommandTerm.reset() to match AMPTrainEnv._reset_idx.
-
-        Original AMPTrainEnv._reset_idx() lines 1250-1252:
-            self._resample_commands(env_ids)   → resample (is_halfway=False)
-            self._update_vel_commands(env_ids) → update reset envs (no in-place turning)
-
-        The parent class only calls _resample; we add _update_command(env_ids)
-        so reset envs get their heading-based angular velocity updated.
-        """
+        """Override reset to also update heading-based ang_vel for reset envs."""
         # Resolve env_ids to a tensor for flag manipulation
         if env_ids is None or isinstance(env_ids, slice):
             env_ids_resolved = torch.arange(self.num_envs, device=self.device, dtype=torch.int64)
@@ -160,9 +128,6 @@ class AmpVelocityCommand(CommandTerm):
 
         # Call parent reset (handles metrics logging + _resample)
         result = super().reset(env_ids)
-
-        # Update heading-based ang_vel for reset envs (no in-place turning)
-        # Mirrors AMPTrainEnv._update_vel_commands(env_ids) — the env_ids branch
         if len(env_ids_resolved) > 0:
             self._update_command(env_ids_resolved)
 
@@ -178,14 +143,14 @@ class AmpVelocityCommand(CommandTerm):
         self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
         self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
 
-        # Zero command rate logic (matches AMPTrainEnv._resample_commands lines 1452-1461)
+        # Zero command rate logic
         zero_cmd_dec = torch.rand(len(env_ids), device=self.device) < self.cfg.zero_command_rate
         nonzero_cmd = torch.norm(self.vel_command_b[env_ids, :2], dim=1) > 0
-        # is_halfway_resample=True: moving envs keep moving (shall_keep_moving = nonzero_cmd)
-        # is_halfway_resample=False: never keep moving (shall_keep_moving = False) → more likely to stop
+        # is_halfway_resample=True: moving envs keep moving
+        # is_halfway_resample=False: never keep moving → more likely to stop
         shall_keep_moving = self.is_halfway_resample[env_ids] & nonzero_cmd
         shall_stop = zero_cmd_dec & (~shall_keep_moving)
-        # Clear halfway flag (matches AMPTrainEnv line 1458)
+        # Clear halfway flag
         self.is_halfway_resample[:] = False
 
         stop_ids = env_ids[shall_stop] if shall_stop.any() else torch.empty(0, dtype=torch.long, device=self.device)
@@ -225,9 +190,8 @@ class AmpVelocityCommand(CommandTerm):
     def _update_command(self, env_ids: torch.Tensor | None = None):
         """Update angular velocity from heading error.
 
-        Matches AMPTrainEnv._update_vel_commands():
-        - If env_ids is None: update ALL envs with in-place turning (halfway context)
-        - If env_ids is provided: update ONLY those envs without in-place turning (reset context)
+        If env_ids is None: update ALL envs with in-place turning.
+        If env_ids is provided: update ONLY those envs without in-place turning.
         """
         if not self.cfg.heading_command:
             return
@@ -241,8 +205,7 @@ class AmpVelocityCommand(CommandTerm):
         heading = torch.atan2(forward[:, 1], forward[:, 0])
 
         if env_ids is not None and len(env_ids) > 0:
-            # Reset envs branch: update only specified envs, no in-place turning
-            # (matches AMPTrainEnv._update_vel_commands lines 1500-1520)
+            # Reset envs: update only specified envs, no in-place turning
             update_mask = ~self.pure_ang_vel_env_mask[env_ids]
             ranges = self.cfg.ranges
 
@@ -263,8 +226,7 @@ class AmpVelocityCommand(CommandTerm):
             pure_mask = self.pure_ang_vel_env_mask[env_ids]
             self.vel_command_b[env_ids[pure_mask], 2] = self.vel_command_b[env_ids[pure_mask], 4]
         else:
-            # All envs branch: update all, with in-place turning
-            # (matches AMPTrainEnv._update_vel_commands lines 1521-1546)
+            # All envs: update all, with in-place turning
             update_mask = ~self.pure_ang_vel_env_mask
             ranges = self.cfg.ranges
 
