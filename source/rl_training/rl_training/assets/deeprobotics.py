@@ -4,6 +4,9 @@
 # Copyright (c) 2024-2025 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+import re
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import DCMotorCfg, DelayedPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
@@ -124,9 +127,53 @@ DEEPROBOTICS_M20_CFG = ArticulationCfg(
 # ---------------------------------------------------------------------------
 # DR02 (DR02-Pro)
 # ---------------------------------------------------------------------------
+
+def _convert_to_fix_joints_urdf(urdf_path: str) -> str:
+    """Convert the original DR02-pro.urdf into a fix_joints version for training.
+    """
+    # Joints to fix (revolute → fixed) and all joints needing dont_collapse
+    fixed_joints = {
+        "waist_x_joint", "waist_y_joint",
+        "neck_y_joint", "neck_z_joint",
+        "left_wrist_x_joint", "left_wrist_y_joint", "left_wrist_z_joint",
+        "right_wrist_x_joint", "right_wrist_y_joint", "right_wrist_z_joint",
+    }
+    dont_collapse_joints = fixed_joints | {
+        "d435_head_joint", "d435_front_joint", "d435_rear_joint",
+        "lidar_joint",
+        "imu_head_joint", "imu_base_joint",
+        "left_hand_joint", "right_hand_joint",
+    }
+
+    with open(urdf_path, "r") as f:
+        content = f.read()
+
+    # 1. Change revolute → fixed for the 10 training-restricted joints
+    for joint_name in fixed_joints:
+        content = re.sub(
+            rf'(<joint name="{re.escape(joint_name)}"\s+type=")revolute(">)',
+            r'\1fixed">',
+            content,
+        )
+
+    # 2. Add dont_collapse="true" to all joints that need it
+    for joint_name in dont_collapse_joints:
+        pattern = rf'(<joint name="{re.escape(joint_name)}"\s+type="[^"]+")(>)'
+        content = re.sub(pattern, r'\1 dont_collapse="true"\2', content)
+
+    # Write to a stable path in the same directory so relative mesh paths work.
+    src_dir = os.path.dirname(urdf_path)
+    out_path = os.path.join(src_dir, "DR02-pro_fix_joints.urdf")
+    if not os.path.exists(out_path):
+        with open(out_path, "w") as f:
+            f.write(content)
+    return out_path
+
 DR02_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/pro/DR02-pro_fix_joints.urdf",
+        asset_path=_convert_to_fix_joints_urdf(
+            f"{ISAACLAB_ASSETS_DATA_DIR}/DR02/urdf/pro/DR02-pro.urdf"
+        ),
         fix_base=False,
         merge_fixed_joints=True,
         replace_cylinders_with_capsules=False,

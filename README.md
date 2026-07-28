@@ -90,6 +90,16 @@ python scripts/reinforcement_learning/rsl_rl/train.py --task=Rough-Deeprobotics-
 python scripts/reinforcement_learning/rsl_rl/play.py --task=Rough-Deeprobotics-M20-v0 --num_envs=10
 ```
 
+Deeprobotics DR02:
+
+```bash
+# Train
+python scripts/reinforcement_learning/rsl_rl/train.py --task=Amp-Flat-Deeprobotics-DR02-v0 --headless
+
+# Play
+python scripts/reinforcement_learning/rsl_rl/play.py --task=Amp-Flat-Deeprobotics-DR02-v0 --num_envs=10
+```
+
 > [!NOTE]
 > If you want to control a **SINGLE ROBOT** with the keyboard during playback, add `--keyboard` at the end of the play script.
 >
