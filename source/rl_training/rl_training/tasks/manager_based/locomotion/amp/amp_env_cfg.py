@@ -351,28 +351,28 @@ class AmpRewardsCfg:
     lin_vel_tracking = RewTerm(
         func=mdp.lin_vel_tracking,
         weight=1.0,
-        params={"command_name": "base_velocity", "decay": 0.45},
+        params={"command_name": "base_velocity", "decay": 0.25},
     )
     ang_vel_tracking = RewTerm(
         func=mdp.ang_vel_tracking,
-        weight=0.8,
-        params={"command_name": "base_velocity", "decay": 0.35},
+        weight=1.0,
+        params={"command_name": "base_velocity", "decay": 0.25},
     )
 
     # ── Posture rewards (Gaussian) ───────────────────────────────
     base_height = RewTerm(
         func=mdp.base_height,
-        weight=0.5,
+        weight=1.0,
         params={"target_height": 0.875, "decay": 0.02},
     )
     orientation = RewTerm(
         func=mdp.orientation_gaussian,
-        weight=0.5,
+        weight=0.6,
         params={"decay": 0.0075},
     )
     ang_vel_xy = RewTerm(
         func=mdp.ang_vel_xy_gaussian,
-        weight=0.25,
+        weight=0.3,
         params={"decay": 0.1},
     )
     # ── Gait rewards ─────────────────────────────────────────────
@@ -397,12 +397,12 @@ class AmpRewardsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=["*ankle.*"]),
             "target_distance": 0.26,
-            "decay": 0.03,
+            "decay": 0.02,
         },
     )
     feet_slippage = RewTerm(
         func=mdp.feet_slippage,
-        weight=-0.05,
+        weight=-0.1,
         params={
             "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
@@ -417,7 +417,7 @@ class AmpRewardsCfg:
     )
     foot_orientation = RewTerm(
         func=mdp.foot_orientation,
-        weight=-3.0,
+        weight=-0.0,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
@@ -467,18 +467,18 @@ class AmpRewardsCfg:
     )
     action_l2 = RewTerm(
         func=mdp.action_l2,
-        weight=-0.03,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
         },
     )
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-    smoothness_l2 = RewTerm(func=mdp.smoothness_l2, weight=-0.005)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.02)
+    smoothness_l2 = RewTerm(func=mdp.smoothness_l2, weight=-0.008)
 
     # ── Constraint rewards ───────────────────────────────────────
     hipz_deviation = RewTerm(
         func=mdp.hipz_deviation,
-        weight=-0.1,
+        weight=-2.0,
         params={"command_name": "base_velocity"},
     )
     dof_err = RewTerm(
@@ -506,7 +506,7 @@ class AmpRewardsCfg:
     )
 
     # AMP reward
-    amp_reward = RewTerm(func=mdp.amp_reward, weight=0.5)
+    amp_reward = RewTerm(func=mdp.amp_reward, weight=1.0)
 
 
 @configclass
@@ -626,9 +626,9 @@ class AmpCurriculumCfg:
         func=mdp.push_curriculum,
         params={
             "reward_term_name": "lin_vel_tracking",
-            "reward_ratio": 0.8,
-            "force_range": (200.0, 100.0, 50.0),
-            "torque_range": (25.0, 50.0, 25.0),
+            "reward_ratio": 0.75,
+            "force_range": (100.0, 50.0, 25.0),
+            "torque_range": (15.0, 25.0, 15.0),
         },
     )
 
@@ -649,7 +649,7 @@ class AmpTerminationsCfg:
 
     bad_orientation = DoneTerm(
         func=mdp.bad_orientation_pitch_roll,
-        params={"pitch_limit": 1.0, "roll_limit": 1.0},
+        params={"pitch_limit": 1.1, "roll_limit": 1.0},
     )
 
     base_height_too_low = DoneTerm(

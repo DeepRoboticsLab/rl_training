@@ -98,7 +98,7 @@ def feet_contact(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg, comma
     ahm = _ahm(env)
     single_contact_steps = torch.sum(ahm.foot_contact_trajs, dim=1) == 1
     single_contact_ratio = single_contact_steps.float().mean(dim=1)
-    single_contact = (single_contact_ratio > 0.01).float()
+    single_contact = (single_contact_ratio >= 0.2).float()
 
     cmd_term = env.command_manager.get_term(command_name)
     condition1 = torch.norm(cmd_term.command[:, :2], dim=1) <= 0.15  # zero_cmd_threshold_xy

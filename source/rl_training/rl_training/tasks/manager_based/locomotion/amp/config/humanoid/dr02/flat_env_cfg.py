@@ -44,10 +44,10 @@ _DOF_ACTION_COEFFS = {
     "right_hip_y_joint": 0.0, "right_hip_x_joint": 0.0, "right_hip_z_joint": 0.0,
     "right_knee_joint": 0.0, "right_ankle_y_joint": 0.0, "right_ankle_x_joint": 0.2,
     "waist_z_joint": 0.0,
-    "left_shoulder_y_joint": 0.02, "left_shoulder_x_joint": 0.0,
-    "left_shoulder_z_joint": 0.0, "left_elbow_joint": 0.01,
-    "right_shoulder_y_joint": 0.02, "right_shoulder_x_joint": 0.0,
-    "right_shoulder_z_joint": 0.0, "right_elbow_joint": 0.01,
+    "left_shoulder_y_joint": 0.0, "left_shoulder_x_joint": 0.0,
+    "left_shoulder_z_joint": 0.0, "left_elbow_joint": 0.0,
+    "right_shoulder_y_joint": 0.0, "right_shoulder_x_joint": 0.0,
+    "right_shoulder_z_joint": 0.0, "right_elbow_joint": 0.0,
 }
 
 
@@ -159,10 +159,7 @@ class DR02AmpFlatEnvCfg(AmpLocomotionEnvCfg):
             self.events.reset_dof_pos.params["asset_cfg"] = joint_cfg
         if hasattr(self.events, "reset_root_state") and self.events.reset_root_state is not None:
             self.events.reset_root_state.params["pose_range"] = {"x": (-1.5, 1.5), "y": (-1.5, 1.5)}
-        # AMP reference
-        if hasattr(self.events, "reset_amp_reference") and self.events.reset_amp_reference is not None:
-            self.events.reset_amp_reference.params["amp_dof_cfg"] = amp_joint_cfg
-        # self.events.push_robots.params["asset_cfg"].body_names = "base_link"
+        self.events.push_robots.params["asset_cfg"].body_names = "base_link"
 
         # Termination overrides (DR02 body names)
         self.terminations.illegal_contact.params["sensor_cfg"].body_names = ["base_link"]
