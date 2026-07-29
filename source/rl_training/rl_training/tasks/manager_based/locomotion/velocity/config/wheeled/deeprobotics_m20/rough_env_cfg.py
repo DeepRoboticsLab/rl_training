@@ -188,7 +188,7 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_vel_limits.params["asset_cfg"].joint_names = self.wheel_joint_names
         self.rewards.joint_power.weight = -0.0 # -2e-5
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.stand_still.weight = -2.0
+        self.rewards.stand_still.weight = -1.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.hipx_joint_pos_penalty.weight = -3.0
         self.rewards.hipx_joint_pos_penalty.params["asset_cfg"].joint_names = self.hipx_joint_names
@@ -223,7 +223,7 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # Action penalties
         self.rewards.action_rate_l2.weight = -0.01
-        self.rewards.action_smooth_l2.weight = -0.01
+        self.rewards.action_smooth_l2.weight = -0.025
 
         # Contact sensor
         self.rewards.undesired_contacts.weight = -1.0
@@ -267,13 +267,13 @@ class DeeproboticsM20RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.upward.weight = 0.0 # 0.08
 
         # Rotation gait rewards
-        self.rewards.rotation_gait_status.weight = 1.5
+        self.rewards.rotation_gait_status.weight = 2.0
         self.rewards.rotation_gait_status.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.rotation_gait_status.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.rotation_gait_status.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
         self.rewards.rotation_gait_status.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
 
-        self.rewards.rotation_gait_symmetry.weight = 10.0
+        self.rewards.rotation_gait_symmetry.weight = 15.0
         self.rewards.rotation_gait_symmetry.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.rotation_gait_symmetry.params["group_a_body_names"] = ["fl_wheel", "hr_wheel"]
         self.rewards.rotation_gait_symmetry.params["group_b_body_names"] = ["fr_wheel", "hl_wheel"]
