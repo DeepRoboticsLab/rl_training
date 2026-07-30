@@ -89,6 +89,7 @@ import torch
 from datetime import datetime
 
 from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.utils import resolve_callable
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -104,6 +105,7 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import rl_training.tasks  # noqa: F401
+from rl_training.envs.amp_locomotion_env import AmpLocomotionEnv, AmpRslRlVecEnvWrapper
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -121,6 +123,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
 
+    runner_class_name = getattr(agent_cfg, "class_name", "OnPolicyRunner")
+    is_custom_runner = runner_class_name not in ("OnPolicyRunner", "DistillationRunner")
     # handle deprecated configurations (convert old policy format to new actor/critic format)
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
@@ -159,7 +163,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = multi_agent_to_single_agent(env)
 
     # save resume path before creating a new log_dir
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    _algo_class_name = getattr(getattr(agent_cfg, "algorithm", None), "class_name", None)
+    if agent_cfg.resume or _algo_class_name == "Distillation":
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
@@ -175,11 +180,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    if isinstance(env.unwrapped, AmpLocomotionEnv):
+        env = AmpRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    else:
+        env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # convert config to dict and create runner
     train_cfg = agent_cfg.to_dict()
-    runner = OnPolicyRunner(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
+    runner_class = resolve_callable(runner_class_name) if is_custom_runner else OnPolicyRunner
+    runner = runner_class(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
     
     # write git state to logs
     runner.add_git_repo_to_log(__file__)

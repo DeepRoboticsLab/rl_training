@@ -91,6 +91,7 @@ import torch
 import isaaclab.utils.math as math_utils
 
 from rsl_rl.runners import OnPolicyRunner
+from rsl_rl.utils import resolve_callable
 
 from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
 from isaaclab.envs import (
@@ -114,6 +115,7 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import rl_training.tasks  # noqa: F401
+from rl_training.envs.amp_locomotion_env import AmpLocomotionEnv, AmpRslRlVecEnvWrapper
 
 
 def _phase_traj_body(
@@ -180,6 +182,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 50
 
+    runner_class_name = getattr(agent_cfg, "class_name", "OnPolicyRunner")
+    is_custom_runner = runner_class_name not in ("OnPolicyRunner", "DistillationRunner")
     # handle deprecated configurations (convert old policy format to new actor/critic format)
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
@@ -189,19 +193,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
     # spawn the robot randomly in the grid (instead of their terrain levels)
-    env_cfg.scene.terrain.max_init_terrain_level = None
     # reduce the number of terrains to save memory
     if env_cfg.scene.terrain.terrain_generator is not None:
         env_cfg.scene.terrain.terrain_generator.num_rows = 5
         env_cfg.scene.terrain.terrain_generator.num_cols = 5
         env_cfg.scene.terrain.terrain_generator.curriculum = False
+        env_cfg.scene.terrain.max_init_terrain_level = None
 
     # disable randomization for play
     env_cfg.observations.policy.enable_corruption = False
-    # remove random pushing
-    env_cfg.events.randomize_apply_external_force_torque = None
-    env_cfg.events.push_robot = None
-    env_cfg.curriculum.command_levels = None
+    # remove random pushing if present
+    for attr in ("randomize_apply_external_force_torque", "push_robot"):
+        if hasattr(env_cfg.events, attr):
+            setattr(env_cfg.events, attr, None)
+    if hasattr(env_cfg.curriculum, "command_levels"):
+        env_cfg.curriculum.command_levels = None
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
@@ -248,13 +254,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    # Use custom wrapper for AMP env to preserve obs_history in get_observations()
+    if isinstance(env.unwrapped, AmpLocomotionEnv):
+        env = AmpRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    else:
+        env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     # convert config to dict and create runner
     train_cfg = agent_cfg.to_dict()
-    ppo_runner = OnPolicyRunner(env, train_cfg, log_dir=None, device=agent_cfg.device)
+    runner_class = resolve_callable(runner_class_name) if is_custom_runner else OnPolicyRunner
+    ppo_runner = runner_class(env, train_cfg, log_dir=None, device=agent_cfg.device)
     ppo_runner.load(resume_path)
 
     # obtain the trained policy for inference

@@ -19,6 +19,7 @@ We've released the following tutorials for training and deploying a reinforcemen
 |---------------------|------------------------------------------------------------|------------|
 | [Deeprobotics Lite3](https://www.deeprobotics.cn/robot/index/product1.html) | Rough-Deeprobotics-Lite3-v0 | <img src="./docs/imgs/deeprobotics_lite3.png" alt="Lite3" width="300">
 | [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/lynx.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300">
+| [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300">
 
 > [!NOTE]
 > If you want to deploy policies in mujoco or real robots, please use the corresponding deploy repo in [Deep Robotics Github Center](https://github.com/DeepRoboticsLab).
@@ -88,6 +89,16 @@ python scripts/reinforcement_learning/rsl_rl/train.py --task=Rough-Deeprobotics-
 
 # Play
 python scripts/reinforcement_learning/rsl_rl/play.py --task=Rough-Deeprobotics-M20-v0 --num_envs=10
+```
+
+Deeprobotics DR02:
+
+```bash
+# Train
+python scripts/reinforcement_learning/rsl_rl/train.py --task=Amp-Flat-Deeprobotics-DR02-v0 --headless
+
+# Play
+python scripts/reinforcement_learning/rsl_rl/play.py --task=Amp-Flat-Deeprobotics-DR02-v0 --num_envs=10
 ```
 
 > [!NOTE]
