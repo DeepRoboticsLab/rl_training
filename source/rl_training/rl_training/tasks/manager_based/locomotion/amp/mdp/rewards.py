@@ -260,13 +260,8 @@ def dof_err(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, jerr_coeffs: dict |
     robot = env.scene[asset_cfg.name]
     indices = asset_cfg.joint_ids
 
-    # Use randomized default from AmpHelperManager if available
     ahm = _ahm(env)
-    default_random = getattr(ahm, "default_dof_pos_random", None)
-    if default_random is not None:
-        dof_err = robot.data.joint_pos[:, indices] - default_random[:, indices]
-    else:
-        dof_err = robot.data.joint_pos[:, indices] - robot.data.default_joint_pos[:, indices]
+    dof_err = robot.data.joint_pos[:, indices] - robot.data.default_joint_pos[:, indices]
 
     coeffs = getattr(ahm, "jerr_coeffs_vec", None)
     if coeffs is not None:
@@ -308,7 +303,7 @@ def feet_impact_vel(env: ManagerBasedEnv, contact_sensor_cfg: SceneEntityCfg) ->
     return torch.sum(ahm.contact.float() * torch.square(downward_vel), dim=1)
 
 
-def foot_orientation(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"])) -> torch.Tensor:
+def feet_orientation(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"])) -> torch.Tensor:
     """Penalize feet x-axis misalignment with torso x-axis. Returns positive; use negative weight."""
     ahm = _ahm(env)
     robot = env.scene[asset_cfg.name]
@@ -333,6 +328,28 @@ def foot_orientation(env: ManagerBasedEnv, command_name: str, asset_cfg: SceneEn
     z_cmd_abs = torch.abs(cmd_term.command[:, 2])
     yaw_scale = torch.clamp(1.0 - z_cmd_abs / 1.2, 0.0, 1.0)
     penalty = penalty * yaw_scale
+    return penalty
+
+
+def feet_flatness(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=[".*foot.*|.*ankle.*"])) -> torch.Tensor:
+    """Penalize foot roll (y-axis tilting away from horizontal).
+
+    Only constrains the foot's y-axis to stay horizontal, which controls roll.
+    Pitch (rotation around y-axis) is left free so the ankle can pitch forward/
+    backward for walking and slopes.  Returns positive; use negative weight.
+    """
+    ahm = _ahm(env)
+    robot = env.scene[asset_cfg.name]
+
+    y_vec = torch.zeros(env.num_envs, 3, device=env.device)
+    y_vec[:, 1] = 1.0  # y-axis unit vector
+    foot_quats = robot.data.body_quat_w[:, ahm.r_feet_ids]  # (num_envs, num_feet, 4)
+
+    penalty = torch.zeros(env.num_envs, device=env.device)
+    for i in range(len(ahm.r_feet_ids)):
+        foot_y = math_utils.quat_apply(foot_quats[:, i], y_vec)  # foot y-axis in world
+        penalty += torch.abs(foot_y[:, 2])  # z-component: 0 = horizontal, >0 = tilted
+
     return penalty
 
 

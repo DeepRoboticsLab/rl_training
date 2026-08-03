@@ -13,49 +13,6 @@ from isaaclab.managers import SceneEntityCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-
-# ────────────────────────────────────────────────────────────────────
-# Push robots
-# ────────────────────────────────────────────────────────────────────
-
-
-def push_robots(
-    env: ManagerBasedEnv,
-    env_ids: torch.Tensor | None,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    force_range: tuple[float, float, float] = (200.0, 100.0, 50.0),
-    torque_range: tuple[float, float, float] = (25.0, 50.0, 25.0),
-):
-    """Apply random external forces and torques to the robot's base link."""
-    asset: Articulation = env.scene[asset_cfg.name]
-
-    if env_ids is None:
-        env_ids = torch.arange(env.scene.num_envs, device=env.device)
-    else:
-        env_ids = env_ids.to(env.device)
-
-    # base link quaternion (world frame)
-    base_quat = asset.data.root_quat_w[env_ids]
-
-    max_force = torch.tensor(force_range, device=env.device, dtype=torch.float)
-    max_torque = torch.tensor(torque_range, device=env.device, dtype=torch.float)
-
-    # sample 1-D random forces/torques in base frame, rotate to world frame
-    random_forces = torch.randn((len(env_ids), 1), device=env.device) * max_force
-    forces_w = math_utils.quat_apply(base_quat, random_forces)
-
-    random_torques = torch.randn((len(env_ids), 1), device=env.device) * max_torque
-    torques_w = math_utils.quat_apply(base_quat, random_torques)
-
-    # apply external force/torque on the base body (body index 0)
-    asset.set_external_force_and_torque(
-        forces=forces_w.unsqueeze(1),  # (N, 1, 3)
-        torques=torques_w.unsqueeze(1),  # (N, 1, 3)
-        body_ids=asset_cfg.body_ids,
-        env_ids=env_ids,
-    )
-
-
 # ────────────────────────────────────────────────────────────────────
 # Reset: DOF positions with randomization
 # ────────────────────────────────────────────────────────────────────

@@ -13,8 +13,6 @@
 #                                Updates last_actions and last_last_actions.
 #
 # feet_air_time is NOT updated here — it is updated inside the feet_air_time
-# reward function to match the original AMPTrainEnv._reward_feet_air_time()
-# execution order (first_contact before increment, reset after reward value).
 
 from __future__ import annotations
 
@@ -244,11 +242,10 @@ class AmpHelperManager(ManagerBase):
     def update_obs_history(self):
         """Update the obs_history buffer using obs_buf["policy"].
 
-        Mirrors the original AMPTrainEnv._compute_observations():
         obs_history_buf = cat(obs_history_buf[:, 1:, :], obs_buf.unsqueeze(1))
 
         The policy observation already has noise, scale, and clip applied
-        by the ObservationManager — no recomputation needed.
+        by the ObservationManager.
         """
         policy_obs = self._env.obs_buf["policy"]  # (num_envs, 73)
         self._obs_history_buf = torch.cat(
@@ -259,11 +256,9 @@ class AmpHelperManager(ManagerBase):
     def post_step_update(self):
         """Update action history — called AFTER obs_history update (end of step).
 
-        Mirrors AMPTrainEnv.step() lines 762-764:
             last_last_actions[:] = last_actions[:]
             last_actions[:] = actions[:]
         """
-        # self._ensure_initialized()
         robot = self._env.scene["robot"]
         self.last_last_actions[:] = self.last_actions[:]
         self.last_actions[:] = self._env.action_manager.action[:]
@@ -302,7 +297,6 @@ class AmpHelperManager(ManagerBase):
 
         Used by the lin_vel_tracking reward function.
         """
-        # self._ensure_initialized()
         robot = self._env.scene["robot"]
         if len(self.r_torso_ids) > 0:
             torso_vel_w = robot.data.body_lin_vel_w[:, self.r_torso_ids[0], :]

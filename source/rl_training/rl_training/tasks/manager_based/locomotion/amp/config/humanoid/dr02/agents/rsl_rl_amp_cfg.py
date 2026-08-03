@@ -92,6 +92,20 @@ class AmpDatasetCfg:
 
 
 @configclass
+class SymmetryCfg:
+    """Left-right symmetry configuration for data augmentation and mirror loss."""
+
+    use_symmetry_data_augmentation: bool = False
+    """If True, double each mini-batch with its left-right symmetrized version."""
+
+    use_symmetry_mirror_loss: bool = False
+    """If True, add a mirror loss that enforces actor(symmetrize(obs)) ≈ symmetrize(actor(obs))."""
+
+    mirror_loss_coeff: float = 0.1
+    """Coefficient for the symmetry mirror loss."""
+
+
+@configclass
 class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
     """Algorithm configuration for PPO_AMP.
 
@@ -109,6 +123,9 @@ class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
     amp_dataset_cfg: AmpDatasetCfg = MISSING
     """AMP motion dataset and replay buffer sub-configuration."""
+
+    symmetry_cfg: SymmetryCfg = field(default_factory=SymmetryCfg)
+    """Left-right symmetry configuration."""
 
 
 @configclass
@@ -202,5 +219,11 @@ class DR02AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             num_preload_transitions=2000000,
             replay_buffer_size=200000,
             motion_files=_MOTION_FILES,
+        ),
+        # Symmetry
+        symmetry_cfg=SymmetryCfg(
+            use_symmetry_data_augmentation=True,
+            use_symmetry_mirror_loss=False,
+            mirror_loss_coeff=0.1,
         ),
     )
