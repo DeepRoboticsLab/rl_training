@@ -135,7 +135,8 @@ class DR02AmpFlatEnvCfg(AmpLocomotionEnvCfg):
         self.rewards.feet_slippage.params["contact_sensor_cfg"] = feet_sensor_reward.copy()
         self.rewards.feet_slippage.params["asset_cfg"] = feet_reward.copy()
         self.rewards.feet_impact_vel.params["contact_sensor_cfg"] = feet_sensor_reward.copy()
-        self.rewards.foot_orientation.params["asset_cfg"] = feet_reward.copy()
+        self.rewards.feet_orientation.params["asset_cfg"] = feet_reward.copy()
+        self.rewards.feet_flatness.params["asset_cfg"] = feet_reward.copy()
 
         # Collision reward
         self.rewards.collision.params["contact_sensor_cfg"] = SceneEntityCfg(
@@ -159,7 +160,6 @@ class DR02AmpFlatEnvCfg(AmpLocomotionEnvCfg):
             self.events.reset_dof_pos.params["asset_cfg"] = joint_cfg
         if hasattr(self.events, "reset_root_state") and self.events.reset_root_state is not None:
             self.events.reset_root_state.params["pose_range"] = {"x": (-1.5, 1.5), "y": (-1.5, 1.5)}
-        self.events.push_robots.params["asset_cfg"].body_names = "base_link"
 
         # Termination overrides (DR02 body names)
         self.terminations.illegal_contact.params["sensor_cfg"].body_names = ["base_link"]

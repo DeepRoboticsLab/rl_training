@@ -136,6 +136,8 @@ class PPO_AMP(PPO):
         amp_disc_cfg: dict | None = None,
         # Estimation terms (extracted from ce_net_cfg by construct_algorithm)
         est_terms: dict | None = None,
+        # Symmetry configuration
+        symmetry_cfg: dict | None = None,
         # RND parameters
         rnd_cfg: dict | None = None,
         # Distributed training parameters
@@ -216,6 +218,28 @@ class PPO_AMP(PPO):
         )
 
         self.batch_index = 0
+
+        # ------------------------------------------------------------------ #
+        # Symmetry
+        # ------------------------------------------------------------------ #
+        _sym_cfg = symmetry_cfg or {}
+        self.use_symmetry_data_augmentation = _sym_cfg.get("use_symmetry_data_augmentation", False)
+        self.use_symmetry_mirror_loss = _sym_cfg.get("use_symmetry_mirror_loss", False)
+        self.mirror_loss_coeff = _sym_cfg.get("mirror_loss_coeff", 0.1)
+        self.use_symmetry = self.use_symmetry_data_augmentation or self.use_symmetry_mirror_loss
+        if self.use_symmetry:
+            from rl_training.tasks.manager_based.locomotion.amp.mdp.symmetry.dr02 import (
+                symmetrize_policy_obs,
+                symmetrize_critic_obs,
+                symmetrize_actions,
+                symmetrize_obs_future,
+                symmetrize_obs_history,
+            )
+            self._sym_policy = symmetrize_policy_obs
+            self._sym_critic = symmetrize_critic_obs
+            self._sym_actions = symmetrize_actions
+            self._sym_obs_future = symmetrize_obs_future
+            self._sym_obs_history = symmetrize_obs_history
 
     # ------------------------------------------------------------------ #
     # act – sample actions and store transition
@@ -316,6 +340,8 @@ class PPO_AMP(PPO):
             "policy_pred": 0.0, "expert_pred": 0.0,
             "value": 0.0, "surrogate": 0.0, "entropy": 0.0,
         })
+        if self.use_symmetry_mirror_loss:
+            mean_loss["symmetry"] = 0.0
         # Mini-batch generators
         generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         amp_policy_gen = self.amp_storage.feed_forward_generator(self.num_mini_batches, self.num_learning_epochs)
@@ -355,14 +381,61 @@ class PPO_AMP(PPO):
         old_mu = batch.old_distribution_params[0]
         old_sigma = batch.old_distribution_params[1]
 
+        # -- Symmetry: data augmentation ----------------------------- #
+        original_batch_size = actions_batch.shape[0]
+        if self.use_symmetry:
+            # Create symmetrized observation TensorDict
+            sym_obs = batch.observations.clone()
+            sym_obs["policy"] = self._sym_policy(batch.observations["policy"])
+            sym_obs["critic"] = self._sym_critic(batch.observations["critic"])
+            sym_obs["obs_history"] = self._sym_obs_history(batch.observations["obs_history"])
+            sym_obs["obs_future"] = self._sym_obs_future(batch.observations["obs_future"])
+            # Recompute latent from symmetrized obs_history through CE-Net
+            if "latent" in sym_obs and "obs_history" in sym_obs:
+                with torch.no_grad():
+                    sym_encodings, _, _ = self.ce_net.encode(sym_obs["obs_history"])
+                    sym_enc_list = [v for k, v in sym_encodings.items()
+                                    if (k != "implicit") and (k in self.est_terms.keys())]
+                    sym_enc_list.append(sym_encodings["implicit"])
+                    sym_obs["latent"] = torch.cat(sym_enc_list, dim=-1)
+            if self.use_symmetry_data_augmentation:
+                # Double the batch: original + symmetrized
+                augmented_obs = TensorDict({}, batch_size=[original_batch_size * 2], device=self.device)
+                for key in batch.observations.keys():
+                    augmented_obs[key] = torch.cat([
+                        batch.observations[key], sym_obs[key]
+                    ], dim=0)
+                actions_batch = torch.cat([
+                    actions_batch, self._sym_actions(actions_batch)
+                ], dim=0)
+                old_actions_log_prob = old_actions_log_prob.repeat(2, 1)
+                target_values = target_values.repeat(2, 1)
+                advantages = advantages.repeat(2, 1)
+                returns = returns.repeat(2, 1)
+                forward_obs = augmented_obs
+            else:
+                # Mirror loss only: still need forward on symmetrized obs
+                forward_obs = batch.observations
+        else:
+            forward_obs = batch.observations
+
         # -- PPO loss ------------------------------------------------- #
         # Forward through actor (MLPModel) with stochastic output
-        self.actor(batch.observations, stochastic_output=True)
+        self.actor(forward_obs, stochastic_output=True)
         actions_log_prob = self.actor.get_output_log_prob(actions_batch)
-        value_batch = self.critic(batch.observations)
-        mu_batch = self.actor.output_mean
-        sigma_batch = self.actor.output_std
-        entropy_batch = self.actor.output_entropy
+        value_batch = self.critic(forward_obs)
+        # Full action_mean (needed for mirror loss); sliced versions for PPO loss
+        action_mean = self.actor.output_mean
+        sigma = self.actor.output_std
+        entropy = self.actor.output_entropy
+        if self.use_symmetry_data_augmentation:
+            mu_batch = action_mean[:original_batch_size]
+            sigma_batch = sigma[:original_batch_size]
+            entropy_batch = entropy[:original_batch_size]
+        else:
+            mu_batch = action_mean
+            sigma_batch = sigma
+            entropy_batch = entropy
 
         # Adaptive learning rate based on KL divergence
         if self.desired_kl is not None and self.schedule == "adaptive":
@@ -398,6 +471,20 @@ class PPO_AMP(PPO):
         mean_loss["value"] += value_loss.item()
         mean_loss["surrogate"] += surrogate_loss.item()
         mean_loss["entropy"] += self.entropy_coef * entropy_batch.mean().item()
+
+        # -- Symmetry mirror loss ----------------------------------- #
+        if self.use_symmetry_mirror_loss:
+            if self.use_symmetry_data_augmentation:
+                # action_mean_full already has [original, symmetrized] halves
+                action_on_symmetry_obs = action_mean[original_batch_size:]
+            else:
+                # Forward on symmetrized obs to get actor(symmetrize(obs))
+                self.actor(sym_obs, stochastic_output=True)
+                action_on_symmetry_obs = self.actor.output_mean
+            action_by_symmetry_func = self._sym_actions(mu_batch)
+            symmetry_loss = nn.functional.l1_loss(action_on_symmetry_obs, action_by_symmetry_func.detach())
+            loss = loss + self.mirror_loss_coeff * symmetry_loss
+            mean_loss["symmetry"] += self.mirror_loss_coeff * symmetry_loss.item()
 
         # -- AMP discriminator loss ----------------------------------- #
         batch_size = amp_policy_batch.shape[0]
@@ -603,6 +690,7 @@ class PPO_AMP(PPO):
         ce_net_cfg = alg_cfg.pop("ce_net_cfg", {})
         amp_disc_cfg = alg_cfg.pop("amp_discriminator_cfg", {})
         amp_dataset_cfg = alg_cfg.pop("amp_dataset_cfg", {})
+        symmetry_cfg = alg_cfg.pop("symmetry_cfg", {})
 
         # Add dummy "latent" to obs for dimension calculation
         latent_dims = ce_net_cfg.get("latent_dims", 19)
@@ -672,14 +760,6 @@ class PPO_AMP(PPO):
             "rl", _env.num_envs, cfg["num_steps_per_env"], storage_obs, [_env.action_manager.total_action_dim], device
         )
 
-        # Auto-filter: pass only params that __init__ accepts.
-        _sig = inspect.signature(alg_class)
-        _constructed = {"ce_net_cfg", "amp_disc_cfg", "est_terms"}
-        init_alg_cfg = {
-            k: v for k, v in alg_cfg.items()
-            if k in _sig.parameters and k not in _constructed
-        }
-
         # Construct algorithm
         alg: PPO_AMP = alg_class(
             actor=actor,
@@ -692,8 +772,9 @@ class PPO_AMP(PPO):
             ce_net_cfg=ce_net_cfg,
             amp_disc_cfg=amp_disc_cfg,
             est_terms=est_terms,
+            symmetry_cfg=symmetry_cfg,
             device=device,
-            **init_alg_cfg,
+            **alg_cfg,
             multi_gpu_cfg=cfg.get("multi_gpu"),
         )
 

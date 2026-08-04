@@ -60,7 +60,7 @@ _FEET_SENSOR_CFG = SceneEntityCfg("contact_sensor", body_names=".*ankle.*")
 
 @configclass
 class AmpSceneCfg(InteractiveSceneCfg):
-    """Scene for AMP flat-terrain training."""
+    """Scene for AMP training."""
 
     # ground terrain (flat plane)
     terrain = TerrainImporterCfg(
@@ -154,7 +154,6 @@ class AmpObservationsCfg:
       dof_pos(21), dof_vel(21), actions(21)]``
     - **critic** (121 dims): ``[body_vel(3), policy terms(73), torques(21),
       foot_force(6), foot_vel(6), hand_pos(6), foot_pos(6)]``
-    - **obs_history** (730 dims): 10-frame × 73 policy obs history
     - **amp_obs_history** (305 dims): 5-frame × 61 AMP obs history (stride=2)
     - **obs_future** (69 dims): future observation for estimation
     - **vel** (3 dims): body velocity estimation target
@@ -375,6 +374,7 @@ class AmpRewardsCfg:
         weight=0.3,
         params={"decay": 0.1},
     )
+
     # ── Gait rewards ─────────────────────────────────────────────
     feet_air_time = RewTerm(
         func=mdp.feet_air_time,
@@ -389,38 +389,6 @@ class AmpRewardsCfg:
         params={
             "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["*ankle.*"]),
             "command_name": "base_velocity",
-        },
-    )
-    feet_distance = RewTerm(
-        func=mdp.feet_distance,
-        weight=0.06,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["*ankle.*"]),
-            "target_distance": 0.26,
-            "decay": 0.02,
-        },
-    )
-    feet_slippage = RewTerm(
-        func=mdp.feet_slippage,
-        weight=-0.1,
-        params={
-            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
-            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
-        },
-    )
-    feet_impact_vel = RewTerm(
-        func=mdp.feet_impact_vel,
-        weight=-1.5,
-        params={
-            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
-        },
-    )
-    foot_orientation = RewTerm(
-        func=mdp.foot_orientation,
-        weight=-0.0,
-        params={
-            "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
         },
     )
 
@@ -504,6 +472,45 @@ class AmpRewardsCfg:
             "threshold": 1.0,
         },
     )
+    feet_distance = RewTerm(
+        func=mdp.feet_distance,
+        weight=0.06,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=["*ankle.*"]),
+            "target_distance": 0.26,
+            "decay": 0.02,
+        },
+    )
+    feet_slippage = RewTerm(
+        func=mdp.feet_slippage,
+        weight=-0.1,
+        params={
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
+        },
+    )
+    feet_impact_vel = RewTerm(
+        func=mdp.feet_impact_vel,
+        weight=-2.5,
+        params={
+            "contact_sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle.*"]),
+        },
+    )
+    feet_orientation = RewTerm(
+        func=mdp.feet_orientation,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
+        },
+    )
+    feet_flatness = RewTerm(
+        func=mdp.feet_flatness,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=[".*ankle.*"]),
+        },
+    )
 
     # AMP reward
     amp_reward = RewTerm(func=mdp.amp_reward, weight=1.0)
@@ -521,7 +528,7 @@ class AmpEventCfg:
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": (0.2, 1.25),
             "dynamic_friction_range": (0.2, 1.25),
-            "restitution_range": (0.01, 0.3),
+            "restitution_range": (0.0, 0.3),
             "num_buckets": 1024,
             "make_consistent": False,
         },
@@ -607,13 +614,14 @@ class AmpEventCfg:
 
     # ── Interval: push robots ────────────────────────────────────
     push_robots = EventTerm(
-        func=mdp.push_robots,
+        func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(0.1, 0.3),
+        interval_range_s=(12.0, 12.0),
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-            "force_range": (0.0, 0.0, 0.0),
-            "torque_range": (0.0, 0.0, 0.0),
+            "velocity_range": {
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+            },
         },
     )
 
@@ -626,9 +634,8 @@ class AmpCurriculumCfg:
         func=mdp.push_curriculum,
         params={
             "reward_term_name": "lin_vel_tracking",
-            "reward_ratio": 0.75,
-            "force_range": (100.0, 50.0, 25.0),
-            "torque_range": (15.0, 25.0, 15.0),
+            "reward_ratio": 0.93,
+            "velocity_range": {"x": (-1.0, 1.0), "y": (-0.5, 0.5)},
         },
     )
 
@@ -674,7 +681,7 @@ class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
     # simulation
     sim: SimulationCfg = SimulationCfg(
         dt=0.005,  # 0.02 / decimation
-        render_interval=4,
+        render_interval=decimation,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -703,15 +710,9 @@ class AmpLocomotionEnvCfg(AmpLocomotionEnvCfg):
     rewards: AmpRewardsCfg = AmpRewardsCfg()
     terminations: AmpTerminationsCfg = AmpTerminationsCfg()
     events: AmpEventCfg = AmpEventCfg()
-
-    # curriculum
     curriculum: AmpCurriculumCfg = AmpCurriculumCfg()
 
     def __post_init__(self):
-        self.decimation = 4
-        self.episode_length_s = 20.0
-        self.sim.dt = 0.005
-        self.sim.render_interval = self.decimation
         # sync physics material from terrain
         self.sim.physics_material = self.scene.terrain.physics_material
         # update sensor update periods

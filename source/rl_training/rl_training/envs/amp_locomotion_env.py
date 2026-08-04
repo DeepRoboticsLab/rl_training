@@ -1,9 +1,8 @@
 # AMP Locomotion Environment
 #
 # Custom ManagerBasedRLEnv subclass that integrates AmpHelperManager
-# and overrides step() to match the original AMPTrainEnv.step() execution order.
 #
-# AMPTrainEnv.step() order:
+# step() order:
 #   1. Process actions
 #   2. Physics stepping (decimation loop)
 #   3. Update episode counters
@@ -57,8 +56,7 @@ class AmpLocomotionEnvCfg(ManagerBasedRLEnvCfg):
 
     amp_helper: AmpHelperCfg = AmpHelperCfg()
 
-    # Reward clipping: if True, clip total reward to min=0 (matches original
-    # AMPTrainEnv's only_positive_rewards)
+    # Reward clipping: if True, clip total reward to min=0
     only_positive_rewards: bool = True
 
 
@@ -69,12 +67,12 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
 
     - :class:`AmpHelperManager` for AMP state buffer management
       (contact state, action history, obs_history)
-    - Custom :meth:`step()` matching the original AMPTrainEnv execution order
+    - Custom :meth:`step()` with AMP-specific execution order
     - Custom :meth:`_reset_idx()` that resets the AMP helper and
       spreads out episode lengths on full reset
     - :meth:`_set_amp_discriminator()` for runner integration
 
-    AMP reference state initialization is handled entirely by the
+    AMP reference state initialization is handled by the
     ``reset_amp_reference`` EventTerm in the EventManager config.
     """
 
@@ -95,21 +93,15 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         self.amp_helper_manager._init_buffers()
 
     def step(self, action: torch.Tensor):
-        """Execute one time-step matching AMPTrainEnv.step() execution order.
+        """Execute one time-step.
 
-        Key differences from :meth:`ManagerBasedRLEnv.step`:
-
-        1. ``amp_helper_manager.pre_reward_update()`` is called
-           AFTER physics stepping and BEFORE termination/reward computation
-           (updates contact and foot_contact_trajs).
-        2. ``only_positive_rewards`` clips total reward to min=0 after
-           reward computation (matches original AMPTrainEnv).
-        3. ``amp_helper_manager.update_obs_history()`` is called
-           AFTER observations are computed (maintains obs_history buffer
-           using obs_buf["policy"], frame-by-frame layout).
-        4. ``amp_helper_manager.post_step_update()`` is called
-           AFTER obs_history update (updates last_actions, last_dof_vel,
-           last_foot_velocities).
+        1. ``amp_helper_manager.pre_reward_update()`` — after physics,
+           before terminations/rewards (updates contact, foot_contact_trajs).
+        2. ``only_positive_rewards`` clips total reward to min=0.
+        3. ``amp_helper_manager.update_obs_history()`` — after observations
+           (maintains obs_history buffer using obs_buf["policy"]).
+        4. ``amp_helper_manager.post_step_update()`` — after obs_history
+           (updates last_actions, last_dof_vel, last_foot_velocities).
         """
         # 1. Process actions
         self.action_manager.process_action(action.to(self.device))
@@ -144,7 +136,7 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         # 6. Compute rewards (feet_air_time updated inside reward function)
         self.reward_buf = self.reward_manager.compute(dt=self.step_dt)
 
-        # Clip negative rewards (matches AMPTrainEnv only_positive_rewards)
+        # Clip negative rewards
         if self.cfg.only_positive_rewards:
             self.reward_buf = torch.clip(self.reward_buf, min=0.0)
 
@@ -173,15 +165,12 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
         # 10. Compute observations
         self.obs_buf = self.observation_manager.compute(update_history=True)
 
-        # 11. Update obs_history buffer using already-computed obs_buf["policy"].
-        #     Layout: [frame0(73), frame1(73), ..., frame9(73)] = 730 dims.
-        #     Matches original AMPTrainEnv._compute_observations().
+        # 11. Update obs_history buffer using obs_buf["policy"]
         self.amp_helper_manager.update_obs_history()
 
-        # 12. Update last_* buffers (after rewards and observations)
-        #     Mirrors AMPTrainEnv.step() lines 762-766
+        # 12. Update last_* buffers
         self.amp_helper_manager.post_step_update()
-        # Add time_outs to extras for PPO timeout bootstrapping (matches AMPTrainEnv)
+        # Add time_outs to extras for PPO timeout bootstrapping
         self.extras["time_outs"] = self.reset_time_outs
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
 
@@ -197,13 +186,12 @@ class AmpLocomotionEnv(ManagerBasedRLEnv):
            buffers using post-reset contact data.
 
         Note: obs_history buffer reset is handled in
-        ``amp_helper_manager.update_obs_history()`` after observations are
-        computed (matching the original AMPTrainEnv which fills the history
-        buffer with the post-reset observation).
+        ``amp_helper_manager.update_obs_history()`` after observations
+        are computed.
         """
         super()._reset_idx(env_ids)
 
-        # Spread out resets for full reset (mirrors AMPTrainEnv._reset_idx)
+        # Spread out resets for full reset
         if len(env_ids) == self.num_envs:
             self.episode_length_buf[:] = torch.randint_like(
                 self.episode_length_buf, high=int(self.max_episode_length)
