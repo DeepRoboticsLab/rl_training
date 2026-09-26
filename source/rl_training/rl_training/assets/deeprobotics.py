@@ -245,3 +245,78 @@ DR02_AMP_DOF_ORDER = [
     "right_shoulder_y_joint", "right_shoulder_x_joint", "right_shoulder_z_joint", "right_elbow_joint",
 ]
 
+
+DEEPROBOTICS_S10_CFG = ArticulationCfg(
+    spawn=sim_utils.UrdfFileCfg(
+        fix_base=False,
+        merge_fixed_joints=False,
+        replace_cylinders_with_capsules=True,
+        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/S10/urdf/S10.urdf",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=100.0,
+            max_angular_velocity=70 / 3.14 * 180,
+            max_depenetration_velocity=1.0,
+            enable_gyroscopic_forces=True,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=1,
+            fix_root_link=False,
+        ),
+        joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
+            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.8),
+        joint_pos={
+            "[f,h]l_hipx.*": 0.1,
+            "[f,h]r_hipx.*": -0.1,
+            "f[l,r]_hipy_joint": -0.35,
+            "h[l,r]_hipy_joint": 0.35,
+            "f[l,r]_knee_joint": 0.65,
+            "h[l,r]_knee_joint": -0.65,
+            ".*wheel_joint": 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.95,
+    actuators={
+        "joint": RandomPDActuatorCfg(
+            joint_names_expr=[".*hipx_joint", ".*hipy_joint", ".*knee_joint"],
+            effort_limit=50.00,
+            effort_limit_sim=50.00,
+            velocity_limit=25.76,
+            velocity_limit_sim=1e7,
+            stiffness=80.0,
+            damping=2.0,
+            friction=0.0,
+            min_delay=0,
+            max_delay=5,
+            motor_strength=(0.8, 1.1),
+            PD_random_range=(0.7, 1.1),
+            pos_bias_range=(-0.1, 0.1),
+            t_n_vel_range=(1 / 5, 1 / 2),
+        ),
+        "wheel": RandomPDActuatorCfg(
+            joint_names_expr=[".*_wheel_joint"],
+            effort_limit=14.00,
+            effort_limit_sim=14.00,
+            velocity_limit=65.50,
+            velocity_limit_sim=1e7,
+            stiffness=0.0,
+            damping=0.8,
+            friction=0.0,
+            min_delay=0,
+            max_delay=3,
+            motor_strength=(0.8, 1.1),
+            PD_random_range=(0.7, 1.1),
+            t_n_vel_range=(1 / 5, 1 / 2),
+            armature=0.0005,
+        ),
+    },
+)
