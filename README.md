@@ -18,9 +18,9 @@ We've released the following tutorials for training and deploying a reinforcemen
 | Robot Model         | Environment Name (ID)                                      | Screenshot |
 |---------------------|------------------------------------------------------------|------------|
 | [Deeprobotics Lite3](https://www.deeprobotics.cn/robot/index/product1.html) | Rough-Deeprobotics-Lite3-v0 | <img src="./docs/imgs/deeprobotics_lite3.png" alt="Lite3" width="300">
-| [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/lynx.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300">
+| [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300">
 | [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300">
-| Deeprobotics S10 | Rough-Deeprobotics-S10-v0 | |
+| [Deeprobotics S10](https://www.deeprobotics.cn/robot/index/lynxs10.html) | Rough-Deeprobotics-S10-v0 | <img src="./docs/imgs/deeprobotics_s10.png" alt="deeprobotics_s10" width="300"> |
 
 > [!NOTE]
 > If you want to deploy policies in mujoco or real robots, please use the corresponding deploy repo in [Deep Robotics Github Center](https://github.com/DeepRoboticsLab).
