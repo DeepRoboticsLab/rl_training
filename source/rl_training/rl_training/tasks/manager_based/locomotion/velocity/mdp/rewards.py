@@ -1092,6 +1092,26 @@ def ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntit
     return reward
 
 
+def ang_vel_z_l2_lateral_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    y_cmd_threshold: float = 0.3,
+    ang_cmd_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Penalize z-axis angular velocity when there is a lateral (y) command but no rotation command.
+
+    This discourages the robot from rotating around the z-axis to satisfy lateral velocity
+    commands instead of actually translating laterally.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    ang_vel_z_sq = torch.square(asset.data.root_ang_vel_b[:, 2])
+
+    cmd = env.command_manager.get_command(command_name)
+    gate = (torch.abs(cmd[:, 1]) > y_cmd_threshold) & (torch.abs(cmd[:, 2]) < ang_cmd_threshold)
+    return ang_vel_z_sq * gate.float()
+
+
 def undesired_contacts(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize undesired contacts as the number of violations that are above a threshold."""
     # extract the used quantities (to enable type-hinting)

@@ -109,8 +109,8 @@ def convert_rsl_rl_cfg_dict(cfg_dict: dict) -> dict:
     Returns:
         The converted config dict compatible with rsl-rl v5+.
     """
-    if "actor" in cfg_dict and "critic" in cfg_dict:
-        # Already in new format
+    if "policy" not in cfg_dict:
+        # Already in new format (no deprecated 'policy' key to convert)
         return cfg_dict
 
     policy = cfg_dict.pop("policy", {})
