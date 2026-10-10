@@ -35,7 +35,7 @@ INSTALL_REQUIRES = [
 # Installation operation
 setup(
     name="rl_training",
-    packages=["rl_training"],
+    packages=["rl_training", "m20_quiet"],
     author=EXTENSION_TOML_DATA["package"]["author"],
     maintainer=EXTENSION_TOML_DATA["package"]["maintainer"],
     url=EXTENSION_TOML_DATA["package"]["repository"],

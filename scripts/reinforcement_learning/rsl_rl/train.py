@@ -14,8 +14,13 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-import sys
 import os
+import sys
+from pathlib import Path
+
+# Use this checkout even when m20_wzh also has an older rl_training installation.
+_LOCAL_SOURCE = Path(__file__).resolve().parents[3] / "source" / "rl_training"
+sys.path.insert(0, str(_LOCAL_SOURCE))
 
 from isaaclab.app import AppLauncher
 
@@ -36,6 +41,14 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--init_actor_from", type=str, default=None,
+    help="Initialize only the actor from an RSL-RL checkpoint; critic, optimizer, and iteration start fresh.",
+)
+parser.add_argument("--init_critic_from", type=str, default=None,
+                    help="Initialize critic weights with --init_actor_from, keeping a fresh optimizer.")
+parser.add_argument("--preserve_actor_from", type=str, default=None,
+                    help="Freeze a task-capable reference for StairGuardedPPO (also persisted in checkpoints).")
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 # append RSL-RL cli arguments
@@ -43,6 +56,10 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.init_actor_from and args_cli.resume:
+    parser.error("--init_actor_from and --resume cannot be used together")
+if args_cli.init_critic_from and (not args_cli.init_actor_from or args_cli.resume):
+    parser.error("--init_critic_from requires --init_actor_from and cannot be used with --resume")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -149,17 +166,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
 
+    # A file path permits full resume across experiment directories, while a
+    # filename/regex retains the original --load_run lookup behavior.
+    _algo_class_name = getattr(getattr(agent_cfg, "algorithm", None), "class_name", None)
+    if agent_cfg.resume or _algo_class_name == "Distillation":
+        checkpoint = Path(agent_cfg.load_checkpoint).expanduser()
+        if checkpoint.is_absolute() or os.sep in agent_cfg.load_checkpoint:
+            checkpoint = checkpoint.resolve()
+            if not checkpoint.is_file():
+                raise FileNotFoundError(f"Resume checkpoint does not exist: {checkpoint}")
+            resume_path = str(checkpoint)
+        else:
+            resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-
-    # save resume path before creating a new log_dir
-    _algo_class_name = getattr(getattr(agent_cfg, "algorithm", None), "class_name", None)
-    if agent_cfg.resume or _algo_class_name == "Distillation":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
     if args_cli.video:
@@ -193,20 +218,53 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+    if args_cli.init_actor_from:
+        init_path = Path(args_cli.init_actor_from).expanduser().resolve()
+        if not init_path.is_file():
+            raise FileNotFoundError(f"Actor initialization checkpoint does not exist: {init_path}")
+        saved = torch.load(init_path, map_location="cpu", weights_only=True)
+        actor_state = saved.get("actor_state_dict")
+        if not isinstance(actor_state, dict):
+            raise ValueError(f"Checkpoint has no actor_state_dict: {init_path}")
+        runner.alg.actor.load_state_dict(actor_state, strict=True)
+        print(f"[INFO]: Initialized actor only from: {init_path}")
+
+    if args_cli.init_critic_from:
+        init_path = Path(args_cli.init_critic_from).expanduser().resolve()
+        saved = torch.load(init_path, map_location="cpu", weights_only=True)
+        runner.alg.critic.load_state_dict(saved["critic_state_dict"], strict=True)
+        print(f"[INFO]: Initialized critic weights (fresh optimizer) from: {init_path}")
+    reference_path = args_cli.preserve_actor_from or args_cli.init_actor_from
+    if hasattr(runner.alg, "set_reference") and reference_path:
+        reference = torch.load(Path(reference_path).expanduser().resolve(), map_location="cpu", weights_only=True)
+        runner.alg.set_reference(reference["actor_state_dict"])
+        print(f"[INFO]: Frozen task preservation actor from: {reference_path}")
+    elif args_cli.preserve_actor_from:
+        raise ValueError("--preserve_actor_from requires the StairGuardedPPO algorithm")
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "cli.yaml"), vars(args_cli))
     
     # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    print(f"[INFO]: Training completed: {log_dir}", flush=True)
 
     # close the simulator
     env.close()
 
 
 if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()
+    try:
+        main()
+    except BaseException:
+        # Kit fast shutdown can suppress an unwinding exception and exit 0.
+        # Emit it and return a real failure before simulator teardown.
+        import traceback
+        traceback.print_exc()
+        sys.stderr.flush()
+        sys.stdout.flush()
+        os._exit(1)
+    finally:
+        simulation_app.close()

@@ -264,3 +264,7 @@ rm -rf /tmp/IsaacLab/usd_*
 The project uses some code from the following open-source code repositories:
 
 - [fan-ziqi/robot_lab](https://github.com/fan-ziqi/robot_lab)
+
+## M20 Quiet Landing V1.5
+
+Independent quiet-landing task with continuous impact-peak penalties and gated support load balance. [Configuration, training and validation (中文)](docs/quiet_landing_v1_5_20261010/README_CN.md).

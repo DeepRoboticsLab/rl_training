@@ -33,3 +33,27 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:DeeproboticsM20RoughTrainerCfg",
     },
 )
+
+gym.register(
+    id="Rough-Deeprobotics-M20-QuietLanding-v0",
+    entry_point="rl_training.quiet_landing_env:M20QuietLandingEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quiet_landing_env_cfg:DeeproboticsM20QuietLandingEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.quiet_landing_ppo_cfg:DeeproboticsM20QuietLandingPPORunnerCfg",
+    },
+)
+
+##
+# Register Gym environments.
+##
+
+gym.register(
+    id="Rough-Deeprobotics-M20-QuietLanding-V1_5-v0",
+    entry_point="rl_training.quiet_landing_env:M20QuietLandingEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quiet_landing_env_cfg:DeeproboticsM20QuietLandingV15EnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.quiet_landing_ppo_cfg:DeeproboticsM20QuietLandingV15PPORunnerCfg",
+    },
+)
