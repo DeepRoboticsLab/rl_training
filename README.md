@@ -8,20 +8,17 @@
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](https://opensource.org/license/bsd-3-clause)
 
-## Tutorial Videos
-We've released the following tutorials for training and deploying a reinforcement learning policy. Please check it out on [Bilibili](https://b23.tv/UoIqsFn) or [YouTube](https://youtube.com/playlist?list=PLy9YHJvMnjO0X4tx_NTWugTUMJXUrOgFH&si=pjUGF5PbFf3tGLFz)! 
-
 ## Overview
 
 **rl_training** is a RL training library for deeprobotics robots, based on IsaacLab. The table below lists all available environments:
 
-| Robot Model         | Environment Name (ID)                                      | Screenshot |
-|---------------------|------------------------------------------------------------|------------|
-| [Deeprobotics Lite3](https://www.deeprobotics.cn/robot/index/product1.html) | Rough-Deeprobotics-Lite3-v0 | <img src="./docs/imgs/deeprobotics_lite3.png" alt="Lite3" width="300">
-| [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300">
-| [Deeprobotics M20S](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20S-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20s" width="300">
-| [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300">
-| [Deeprobotics S10](https://www.deeprobotics.cn/robot/index/lynxs10.html) | Rough-Deeprobotics-S10-v0 | <img src="./docs/imgs/deeprobotics_s10.png" alt="deeprobotics_s10" width="300"> |
+| Robot Model         | Environment Name (ID)                                      | Screenshot | Tutorial Videos |
+|---------------------|------------------------------------------------------------|------------|-----------------|
+| [Deeprobotics Lite3](https://www.deeprobotics.cn/robot/index/product1.html) | Rough-Deeprobotics-Lite3-v0 | <img src="./docs/imgs/deeprobotics_lite3.png" alt="Lite3" width="300"> | [Bilibili](https://b23.tv/UoIqsFn) / [YouTube](https://youtube.com/playlist?list=PLy9YHJvMnjO0X4tx_NTWugTUMJXUrOgFH&si=pjUGF5PbFf3tGLFz) |
+| [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300"> | [Bilibili](https://b23.tv/CSEyYvw) / [YouTube](https://youtu.be/5VKMahWWYM4?si=ctktKv-1FmfcdbeZ) |
+| [Deeprobotics M20S](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20S-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20s" width="300"> | — |
+| [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300"> | [Bilibili](https://b23.tv/658wI0Q) / [YouTube](https://youtu.be/xmptqd-LDUs?si=APUTRh6i8KmLGrmD) |
+| [Deeprobotics S10](https://www.deeprobotics.cn/robot/index/lynxs10.html) | Rough-Deeprobotics-S10-v0 | <img src="./docs/imgs/deeprobotics_s10.png" alt="deeprobotics_s10" width="300"> | — |
 
 > [!NOTE]
 > If you want to deploy policies in mujoco or real robots, please use the corresponding deploy repo in [Deep Robotics Github Center](https://github.com/DeepRoboticsLab).
