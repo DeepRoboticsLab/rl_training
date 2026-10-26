@@ -108,12 +108,23 @@ def convert_rsl_rl_cfg_dict(cfg_dict: dict) -> dict:
 
     Returns:
         The converted config dict compatible with rsl-rl v5+.
+
+    Raises:
+        ValueError: Neither complete actor/critic configs nor a legacy policy config is provided.
     """
-    if "policy" not in cfg_dict:
-        # Already in new format (no deprecated 'policy' key to convert)
+    # Isaac Lab may retain policy=None alongside native actor/critic configs.
+    # MISSING actor/critic fields can serialize to {}, so require class_name too.
+    if all(
+        isinstance(cfg_dict.get(key), dict) and cfg_dict[key].get("class_name")
+        for key in ("actor", "critic")
+    ):
+        cfg_dict.pop("policy", None)
         return cfg_dict
 
-    policy = cfg_dict.pop("policy", {})
+    policy = cfg_dict.get("policy")
+    if not isinstance(policy, dict) or not policy:
+        raise ValueError("RSL-RL config requires complete 'actor'/'critic' configs or a non-empty legacy 'policy' dict.")
+    cfg_dict.pop("policy")
 
     # Build distribution config for actor from noise std settings
     init_noise_std = policy.pop("init_noise_std", 1.0)
