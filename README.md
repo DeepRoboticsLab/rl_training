@@ -17,7 +17,7 @@
 | [Deeprobotics Lite3](https://www.deeprobotics.cn/robot/index/product1.html) | Rough-Deeprobotics-Lite3-v0 | <img src="./docs/imgs/deeprobotics_lite3.png" alt="Lite3" width="300"> | [Bilibili](https://b23.tv/UoIqsFn) / [YouTube](https://youtube.com/playlist?list=PLy9YHJvMnjO0X4tx_NTWugTUMJXUrOgFH&si=pjUGF5PbFf3tGLFz) |
 | [Deeprobotics M20](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20" width="300"> | [Bilibili](https://b23.tv/CSEyYvw) / [YouTube](https://youtu.be/5VKMahWWYM4?si=ctktKv-1FmfcdbeZ) |
 | [Deeprobotics M20S](https://www.deeprobotics.cn/robot/index/m20.html) | Rough-Deeprobotics-M20S-v0 | <img src="./docs/imgs/deeprobotics_m20.png" alt="deeprobotics_m20s" width="300"> | — |
-| [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300"> | [Bilibili](https://b23.tv/658wI0Q) / [YouTube](https://youtu.be/xmptqd-LDUs?si=APUTRh6i8KmLGrmD) |
+| [Deeprobotics DR02](https://www.deeprobotics.cn/robot/index/dr02.html) | Amp-Flat-Deeprobotics-DR02-v0 | <img src="./docs/imgs/deeprobotics_dr02.png" alt="deeprobotics_dr02" width="300"> | **Training** [Bilibili](https://b23.tv/658wI0Q) / [YouTube](https://youtu.be/xmptqd-LDUs?si=APUTRh6i8KmLGrmD)<br>**DR02 Pro deployment** [Bilibili](https://www.bilibili.com/video/BV1q6xD6MEEk/) / [YouTube](https://youtu.be/6G4IpndLDF0) |
 | [Deeprobotics S10](https://www.deeprobotics.cn/robot/index/lynxs10.html) | Rough-Deeprobotics-S10-v0 | <img src="./docs/imgs/deeprobotics_s10.png" alt="deeprobotics_s10" width="300"> | — |
 
 > [!NOTE]
